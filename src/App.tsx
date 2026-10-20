@@ -39,6 +39,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { InstallApp } from "./InstallApp";
 import { supabase } from "./supabase";
 import { Auth } from "./Auth";
+import { ProfileMenu } from "./ProfileMenu";
 import { fetchState, executeWrite, dbImportAll, type DbWrite } from "./db";
 import type { Session } from "@supabase/supabase-js";
 
@@ -282,6 +283,7 @@ function AppShell({ session }: { session: Session }) {
           <div className="header-actions">
             <InstallApp />
             <ThemeToggle />
+            <ProfileMenu session={session} />
             <div className="account-picker">
               <Wallet size={16} />
               <select
