@@ -36,7 +36,6 @@ import { Statistics } from "./Statistics";
 import { Modal } from "./ui";
 import { Backup } from "./Backup";
 import { ThemeToggle } from "./ThemeToggle";
-import { InstallApp } from "./InstallApp";
 import { supabase } from "./supabase";
 import { Auth } from "./Auth";
 import { ProfileMenu } from "./ProfileMenu";
@@ -281,7 +280,6 @@ function AppShell({ session }: { session: Session }) {
             <strong>{view}</strong>
           </div>
           <div className="header-actions">
-            <InstallApp />
             <ThemeToggle />
             <ProfileMenu session={session} />
             <div className="account-picker">
