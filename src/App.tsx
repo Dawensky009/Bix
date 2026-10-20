@@ -1,4 +1,4 @@
-import { useState, useRef, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import {
   Plus,
   LayoutDashboard,
@@ -33,11 +33,14 @@ import { EntryForm, Journal, BalanceChart } from "./Journal";
 import { Goals } from "./Goals";
 import { Forecast } from "./Forecast";
 import { Statistics } from "./Statistics";
-import { loadState, persistState, STORAGE_KEY } from "./storage";
 import { Modal } from "./ui";
 import { Backup } from "./Backup";
 import { ThemeToggle } from "./ThemeToggle";
 import { InstallApp } from "./InstallApp";
+import { supabase } from "./supabase";
+import { Auth } from "./Auth";
+import { fetchState, executeWrite, dbImportAll, type DbWrite } from "./db";
+import type { Session } from "@supabase/supabase-js";
 
 type View = "Overview" | "Daily journal" | "Statistics" | "Goals" | "Forecast";
 
@@ -50,28 +53,40 @@ const money = (value: number, currency = "USD") =>
 
 const uid = () => crypto.randomUUID();
 
-function initial() {
-  try {
-    return { state: loadState(localStorage), error: "" };
-  } catch (e) {
-    return { state: emptyState, error: String(e) };
-  }
+export default function App() {
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (session === undefined) return <div className="auth-loading" />;
+  if (!session) return <Auth />;
+
+  return <AppShell session={session} />;
 }
 
-export default function App() {
-  const [boot, setBoot] = useState(initial);
-  const rawSnapshot = useRef<string | null | undefined>(undefined);
-  if (rawSnapshot.current === undefined) {
-    try {
-      rawSnapshot.current = localStorage.getItem(STORAGE_KEY);
-    } catch {
-      rawSnapshot.current = null;
-    }
-  }
-  const [state, setState] = useState<State>(boot.state);
-  const [error, setError] = useState(boot.error);
+function AppShell({ session }: { session: Session }) {
+  const [state, setState] = useState<State>(emptyState);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [view, setView] = useState<View>("Overview");
-  const [activeId, setActiveId] = useState(state.brokers[0]?.id ?? "");
+  const [activeId, setActiveId] = useState("");
+
+  useEffect(() => {
+    fetchState(session.user.id)
+      .then((s) => {
+        setState(s);
+        setActiveId(s.brokers[0]?.id ?? "");
+        setLoading(false);
+      })
+      .catch((e) => {
+        setError(String(e));
+        setLoading(false);
+      });
+  }, [session.user.id]);
   const [brokerModal, setBrokerModal] = useState<Broker | "new" | null>(null);
   const [txModal, setTxModal] = useState<Transaction | "new" | null>(null);
   const [txType, setTxType] = useState<"deposit" | "withdrawal">("withdrawal");
@@ -123,17 +138,13 @@ export default function App() {
   const totalPortfolioPnl = portfolioItems.reduce((s, x) => s + x.pnl, 0);
 
   function removeEntry(entry: Entry) {
-    if (
-      window.confirm(
-        `Delete the entry for ${entry.date}? This cannot be undone.`,
-      )
-    )
-      attempt(() => commit(deleteEntry(state, entry.id)));
+    if (window.confirm(`Delete the entry for ${entry.date}? This cannot be undone.`))
+      void commit(deleteEntry(state, entry.id), { kind: "entry-del", id: entry.id });
   }
 
   function removeTx(tx: Transaction) {
     if (window.confirm("Delete this transaction? This cannot be undone."))
-      attempt(() => commit(deleteTransaction(state, tx.id)));
+      void commit(deleteTransaction(state, tx.id), { kind: "tx-del", id: tx.id });
   }
 
   function onTransaction(event: FormEvent<HTMLFormElement>) {
@@ -148,25 +159,21 @@ export default function App() {
         amount: txType === "withdrawal" ? -Math.abs(raw) : Math.abs(raw),
         note: String(data.get("note")),
       };
-      commit(saveTransaction(state, tx));
+      const next = saveTransaction(state, tx);
       setTxModal(null);
+      void commit(next, { kind: "tx", tx });
     });
   }
 
-  function commit(next: State, recovering = false) {
-    if (boot.error && !recovering)
-      throw new Error(
-        "Stored data could not be read. Export the raw backup, then import a valid backup to recover.",
-      );
-    if (localStorage.getItem(STORAGE_KEY) !== rawSnapshot.current)
-      throw new Error(
-        "Data changed in another tab. Reload before saving to avoid overwriting it.",
-      );
-    persistState(localStorage, next);
-    rawSnapshot.current = localStorage.getItem(STORAGE_KEY);
+  async function commit(next: State, write: DbWrite): Promise<void> {
     setState(next);
     setError("");
-    if (recovering) setBoot({ state: next, error: "" });
+    try {
+      await executeWrite(session.user.id, write);
+    } catch (e) {
+      setState(state); // revert on DB error
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   function attempt(action: () => void) {
@@ -187,9 +194,10 @@ export default function App() {
         currency: String(data.get("currency")) as Broker["currency"],
         initialBalance: Number(data.get("initialBalance")),
       };
-      commit(saveBroker(state, b));
+      const next = saveBroker(state, b);
       setActiveId(b.id);
       setBrokerModal(null);
+      void commit(next, { kind: "broker", broker: b });
     });
   }
 
@@ -208,6 +216,8 @@ export default function App() {
     Goals: { title: "Goals", sub: "Set targets, track progress." },
     Forecast: { title: "Forecast", sub: "Two scenarios. No guarantees." },
   };
+
+  if (loading) return <div className="auth-loading" />;
 
   return (
     <div className="app-shell">
@@ -239,18 +249,25 @@ export default function App() {
         <div className="sidebar-bottom">
           <div className="privacy-card">
             <ShieldCheck size={20} />
-            <strong>Just you. Your data.</strong>
+            <strong>Your data. Cloud-secured.</strong>
             <p>
-              Stored on this device.
+              Synced to your account.
               <br />
               No broker credentials needed.
             </p>
           </div>
           <div className="profile">
-            <span className="avatar">B</span>
+            <span className="avatar">
+              {session.user.email?.[0]?.toUpperCase() ?? "U"}
+            </span>
             <div>
-              <strong>Personal workspace</strong>
-              <small>Local-first edition</small>
+              <strong className="profile-email">{session.user.email}</strong>
+              <button
+                className="text-button profile-signout"
+                onClick={() => supabase.auth.signOut()}
+              >
+                Sign out
+              </button>
             </div>
           </div>
         </div>
@@ -530,7 +547,10 @@ export default function App() {
                       broker={broker}
                       goals={state.goals.filter((g) => g.brokerId === broker.id)}
                       entries={entries}
-                      onSave={(goal) => commit(saveGoal(state, goal))}
+                      onSave={(goal) => attempt(() => {
+                        const next = saveGoal(state, goal);
+                        void commit(next, { kind: "goal", goal });
+                      })}
                       onDelete={() => {}}
                       compact
                     />
@@ -587,14 +607,15 @@ export default function App() {
                   broker={broker}
                   goals={state.goals.filter((g) => g.brokerId === broker.id)}
                   entries={entries}
-                  onSave={(goal) => commit(saveGoal(state, goal))}
+                  onSave={(goal) => attempt(() => {
+                    const next = saveGoal(state, goal);
+                    void commit(next, { kind: "goal", goal });
+                  })}
                   onDelete={(id) => {
                     if (window.confirm("Delete this goal?"))
-                      attempt(() =>
-                        commit({
-                          ...state,
-                          goals: state.goals.filter((g) => g.id !== id),
-                        }),
+                      void commit(
+                        { ...state, goals: state.goals.filter((g) => g.id !== id) },
+                        { kind: "goal-del", id },
                       );
                   }}
                 />
@@ -622,17 +643,18 @@ export default function App() {
 
           <Backup
             state={state}
-            recovery={!!boot.error}
             onImport={(next) => {
-              commit(next, true);
+              setState(next);
               setActiveId(next.brokers[0]?.id ?? "");
+              dbImportAll(session.user.id, next).catch((e) =>
+                setError(e instanceof Error ? e.message : String(e)),
+              );
             }}
           />
 
           <footer>
             <span>
-              <span className="status-dot" /> Private by design. Saved on this
-              device.
+              <span className="status-dot" /> Private by design. Synced to your account.
             </span>
             <span>BIX / A little more clarity.</span>
           </footer>
@@ -644,7 +666,10 @@ export default function App() {
           broker={broker}
           entry={entryModal === "new" ? null : entryModal}
           opening={balance}
-          onSave={(entry) => commit(saveEntry(state, entry))}
+          onSave={(entry) => attempt(() => {
+            const next = saveEntry(state, entry);
+            void commit(next, { kind: "entry", entry });
+          })}
           close={() => setEntryModal(null)}
         />
       )}
@@ -736,11 +761,11 @@ export default function App() {
                 type="button"
                 className="secondary negative"
                 onClick={() => {
-                  if (window.confirm("Delete this transaction?"))
-                    attempt(() => {
-                      commit(deleteTransaction(state, (txModal as Transaction).id));
-                      setTxModal(null);
-                    });
+                  if (window.confirm("Delete this transaction?")) {
+                    const id = (txModal as Transaction).id;
+                    setTxModal(null);
+                    void commit(deleteTransaction(state, id), { kind: "tx-del", id });
+                  }
                 }}
               >
                 Delete transaction
@@ -810,15 +835,11 @@ export default function App() {
                 type="button"
                 className="secondary negative"
                 onClick={() => {
-                  if (
-                    window.confirm(
-                      "Delete this broker and ALL of its entries and goals? This cannot be undone.",
-                    )
-                  )
-                    attempt(() => {
-                      commit(deleteBroker(state, brokerModal.id));
-                      setBrokerModal(null);
-                    });
+                  if (window.confirm("Delete this broker and ALL of its entries and goals? This cannot be undone.")) {
+                    const id = brokerModal.id;
+                    setBrokerModal(null);
+                    void commit(deleteBroker(state, id), { kind: "broker-del", id });
+                  }
                 }}
               >
                 Delete broker

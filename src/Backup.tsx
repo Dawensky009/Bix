@@ -1,28 +1,22 @@
 import { useState, type ChangeEvent } from "react";
 import { Download, Upload } from "lucide-react";
 import { localDate, parseState, type State } from "./domain";
-import { STORAGE_KEY } from "./storage";
 export function Backup({
   state,
-  recovery,
   onImport,
 }: {
   state: State;
-  recovery: boolean;
   onImport: (state: State) => void;
 }) {
   const [error, setError] = useState("");
   function download() {
     try {
-      const contents = recovery
-        ? (localStorage.getItem(STORAGE_KEY) ?? "")
-        : JSON.stringify(state, null, 2);
       const url = URL.createObjectURL(
-        new Blob([contents], { type: "application/json" }),
+        new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }),
       );
       const a = document.createElement("a");
       a.href = url;
-      a.download = `bix-${recovery ? "raw-" : ""}backup-${localDate()}.json`;
+      a.download = `bix-backup-${localDate()}.json`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
@@ -53,8 +47,7 @@ export function Backup({
     <section className="backup-tools" aria-label="Data backup">
       <div>
         <button className="text-button" onClick={download}>
-          <Download size={14} />{" "}
-          {recovery ? "Export raw backup" : "Export backup"}
+          <Download size={14} /> Export backup
         </button>
         <label className="text-button upload-label">
           <Upload size={14} /> Import backup
@@ -67,7 +60,7 @@ export function Backup({
         </label>
       </div>
       <span>
-        Back up regularly. Clearing browser data removes your journal.
+        Back up regularly. Your data is stored in the cloud.
       </span>
       {error && (
         <div className="error" role="alert">

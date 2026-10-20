@@ -314,7 +314,7 @@ export function Statistics({
                   {hasTrade && (
                     <span className={`cal-pnl ${pnl >= 0 ? "positive" : "negative"}`}>
                       {pnl > 0 ? "+" : ""}
-                      {pnl.toFixed(0)}
+                      {money(pnl, currency)}
                     </span>
                   )}
                 </div>

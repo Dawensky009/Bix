@@ -1532,46 +1532,49 @@ textarea {
 }
 .cal-blank {
   border-radius: 9px;
-  aspect-ratio: 1;
+  min-height: 72px;
 }
 .cal-day {
   border-radius: 9px;
-  aspect-ratio: 1;
-  min-height: 50px;
+  min-height: 72px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 7px 8px 9px;
   background: var(--raised);
   border: 1px solid var(--border);
   cursor: default;
-  transition: transform 0.12s;
+  transition: transform 0.12s, box-shadow 0.12s;
   position: relative;
   overflow: hidden;
 }
 .cal-day:hover {
-  transform: scale(1.07);
+  transform: scale(1.05);
   z-index: 1;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
 }
 .cal-day-win {
-  border-color: rgba(105, 223, 177, 0.28);
+  border-color: rgba(105, 223, 177, 0.32);
 }
 .cal-day-loss {
-  border-color: rgba(255, 155, 155, 0.28);
+  border-color: rgba(255, 155, 155, 0.32);
 }
 .cal-num {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1;
+  align-self: flex-start;
 }
 .cal-pnl {
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
   line-height: 1;
+  align-self: center;
+  width: 100%;
+  text-align: center;
 }
 
 /* Year bars */
@@ -1847,11 +1850,12 @@ textarea {
     gap: 3px;
   }
   .cal-day {
-    min-height: 40px;
+    min-height: 56px;
     border-radius: 7px;
+    padding: 5px 6px 7px;
   }
   .cal-pnl {
-    font-size: 8px;
+    font-size: 10px;
   }
   .month-bars {
     gap: 3px;
@@ -1880,15 +1884,134 @@ textarea {
 }
 @media (max-width: 480px) {
   .cal-day {
-    min-height: 34px;
+    min-height: 42px;
     border-radius: 6px;
+    padding: 4px 4px 5px;
   }
   .cal-num {
-    font-size: 10px;
+    font-size: 9px;
   }
   .cal-pnl {
-    display: none;
+    font-size: 9px;
+    font-weight: 700;
   }
+}
+
+/* Auth screen */
+.auth-loading {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+}
+.auth-shell {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--bg);
+}
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 40px 36px 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.auth-brand {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 6px;
+  text-decoration: none;
+}
+.auth-tagline {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 28px;
+}
+.auth-tabs {
+  display: flex;
+  background: var(--raised);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+  margin-bottom: 22px;
+}
+.auth-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  transition: background 0.15s, color 0.15s;
+}
+.auth-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.auth-sent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 12px 0 4px;
+}
+.auth-sent-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(105, 223, 177, 0.15);
+  border: 1px solid rgba(105, 223, 177, 0.3);
+  color: var(--positive);
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.auth-sent p {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+/* Profile email + sign out */
+.profile-email {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+  display: block;
+}
+.profile-signout {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0;
+  text-align: left;
+}
+.profile-signout:hover {
+  color: var(--negative);
 }
 
 @media (prefers-reduced-motion: reduce) {
