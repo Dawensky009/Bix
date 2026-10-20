@@ -38,7 +38,9 @@ export function Forecast({
     rate >= -100 &&
     rate <= 100 &&
     Number.isFinite(scenario) &&
-    !error;
+    Number.isInteger(Number(sessions)) &&
+    Number(sessions) >= 1 &&
+    Number(sessions) <= 365;
   const active = goals.filter(
     (g) =>
       g.start <= localDate() && goalProgress(g, entries).end >= localDate(),

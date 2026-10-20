@@ -40,13 +40,11 @@ test("manage brokers, isolate accounts and export a backup", async ({
 
 test("reject invalid backup without overwriting data", async ({ page }) => {
   await page.goto("/");
-  await page
-    .getByLabel("Import backup")
-    .setInputFiles({
-      name: "bad.json",
-      mimeType: "application/json",
-      buffer: Buffer.from('{"version":99}'),
-    });
+  await page.getByLabel("Import backup").setInputFiles({
+    name: "bad.json",
+    mimeType: "application/json",
+    buffer: Buffer.from('{"version":99}'),
+  });
   await expect(page.getByRole("alert")).toContainText("version");
   expect(
     await page.evaluate(() => localStorage.getItem("bix.state.v1")),

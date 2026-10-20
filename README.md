@@ -20,12 +20,16 @@ npm run preview -- --port 4174
 
 Open http://127.0.0.1:4174. Offline caching is enabled in production, not the dev server. Open once online and let the service worker finish installing before going offline. Install with Chrome/Edge's address-bar install action, or Safari's Share → Add to Home Screen. Remote installation requires HTTPS. Updates take effect after closing all BIX tabs and reopening. An installed app has not been tested on physical iOS/Android hardware.
 
+## Themes and installation
+
+The header offers a remembered dark/light theme toggle and **Install app**. Supported Chromium browsers show their native installer after a click; other browsers receive instructions, including Safari on iOS. The app never claims installation completed until the browser reports it (or it is running standalone). Dark cyan is the default. Theme preference is stored separately as `bix.theme`; switching themes does not change journal data.
+
 ## Features
 
 - Add, select, rename and delete broker account labels (USD, EUR, HTG). Deletion explicitly confirms removal of that broker's entries and goals. Changing a currency label **does not convert** existing amounts.
 - Record one day per broker: date, opening/closing balance, net deposits/withdrawals and notes. Edit/delete records with duplicate and input validation.
 - Account dashboard, balance history, winning-day percentage and daily returns. Empty first-run state: no seeded or fabricated trading results.
-- Weekly goals cover seven days including the selected start. Monthly goals start on the first day and end on the last day of the calendar month. Progress is net trading P&L, not deposits. Editing the same broker/period/start replaces that target.
+- Goals have freely selected start and end dates, both inclusive (for example October 19 through November 19). Weekly/monthly labels provide suggested periods, not restrictions. Month-end suggestions clamp to the last valid day. Existing version-1 goals without an end retain their original calendar-month/seven-day deadlines. Progress is net trading P&L, not deposits. Editing the same broker/period/start replaces that target.
 - History-based geometric-mean projection and a separate hypothetical constant-return scenario. Active goals show the remaining profit needed and deadline.
 - Versioned JSON export/import with explicit replacement confirmation, schema validation, a 5 MB import limit and raw-data export for recovery.
 - Local persistence, offline reload and offline data entry. Unsaved forms are not persisted.

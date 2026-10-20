@@ -27,6 +27,8 @@ import { Forecast } from "./Forecast";
 import { loadState, persistState, STORAGE_KEY } from "./storage";
 import { Modal } from "./ui";
 import { Backup } from "./Backup";
+import { ThemeToggle } from "./ThemeToggle";
+import { InstallApp } from "./InstallApp";
 
 type View = "Overview" | "Daily journal" | "Goals" | "Forecast";
 const money = (value: number, currency = "USD") =>
@@ -143,6 +145,7 @@ export default function App() {
           ).map(({ label, icon: Icon }) => (
             <button
               key={label}
+              aria-current={view === label ? "page" : undefined}
               className={view === label ? "nav-item active" : "nav-item"}
               onClick={() => setView(label)}
             >
@@ -177,28 +180,34 @@ export default function App() {
             Workspace <span>/</span>
             <strong>{view}</strong>
           </div>
-          <div className="account-picker">
-            <Wallet size={17} />
-            <select
-              aria-label="Active broker"
-              value={broker?.id ?? ""}
-              onChange={(e) => setActiveId(e.target.value)}
-            >
-              {!state.brokers.length && <option value="">No broker yet</option>}
-              {state.brokers.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} · {b.currency}
-                </option>
-              ))}
-            </select>
-            <button
-              className="icon-button"
-              aria-label="Add broker"
-              title="Add broker"
-              onClick={() => setBrokerModal("new")}
-            >
-              <Plus size={18} />
-            </button>
+          <div className="header-actions">
+            <InstallApp />
+            <ThemeToggle />
+            <div className="account-picker">
+              <Wallet size={17} />
+              <select
+                aria-label="Active broker"
+                value={broker?.id ?? ""}
+                onChange={(e) => setActiveId(e.target.value)}
+              >
+                {!state.brokers.length && (
+                  <option value="">No broker yet</option>
+                )}
+                {state.brokers.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} · {b.currency}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="icon-button"
+                aria-label="Add broker"
+                title="Add broker"
+                onClick={() => setBrokerModal("new")}
+              >
+                <Plus size={18} />
+              </button>
+            </div>
           </div>
         </header>
         <main>

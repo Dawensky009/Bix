@@ -252,8 +252,8 @@ export function BalanceChart({
           >
             <defs>
               <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#94b674" stopOpacity=".22" />
-                <stop offset="100%" stopColor="#94b674" stopOpacity="0" />
+                <stop offset="0%" stopColor="var(--accent)" stopOpacity=".22" />
+                <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
               </linearGradient>
             </defs>
             {[40, 105, 170].map((y) => (
@@ -263,7 +263,7 @@ export function BalanceChart({
                 y1={y}
                 x2="700"
                 y2={y}
-                stroke="#edf0e8"
+                stroke="var(--border)"
                 strokeDasharray="4 5"
               />
             ))}
@@ -274,7 +274,7 @@ export function BalanceChart({
             <polyline
               points={points}
               fill="none"
-              stroke="#638b49"
+              stroke="var(--accent)"
               strokeWidth="2.5"
               strokeLinejoin="round"
             />

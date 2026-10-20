@@ -85,6 +85,102 @@ const goal: domain.Goal = {
   start: "2024-02-29",
   target: 100,
 };
+it("saves a freely chosen monthly start and includes both explicit boundaries", () => {
+  const flexible = {
+    ...goal,
+    period: "monthly" as const,
+    start: "2024-10-19",
+    end: "2024-11-19",
+  };
+  const saved = domain.saveGoal(
+    domain.saveBroker(domain.emptyState, broker),
+    flexible,
+  );
+  expect(saved.goals).toEqual([flexible]);
+  const entries = ["2024-10-18", "2024-10-19", "2024-11-19", "2024-11-20"].map(
+    (date) => ({ ...entry, date }),
+  );
+  expect(
+    domain.goalProgress(saved.goals[0], [
+      ...entries,
+      { ...entry, date: flexible.end, brokerId: "other" },
+    ]),
+  ).toEqual({ earned: 100, percent: 100, end: flexible.end });
+});
+it.each(["2024-02-28", "2024-02-30", "2024-2-29", "", null, 42])(
+  "rejects invalid explicit end %j in save, progress and import",
+  (end) => {
+    const invalid = { ...goal, end } as domain.Goal;
+    expect(() =>
+      domain.saveGoal(domain.saveBroker(domain.emptyState, broker), invalid),
+    ).toThrow(/date|end/i);
+    expect(() => domain.goalProgress(invalid, [])).toThrow(/date|end/i);
+    expect(() =>
+      domain.parseState({
+        version: 1,
+        brokers: [broker],
+        entries: [],
+        goals: [invalid],
+      }),
+    ).toThrow(/date|end/i);
+  },
+);
+it("rejects a legacy weekly deadline beyond year 9999 with a useful error", () => {
+  const overflow = { ...goal, start: "9999-12-26" };
+  expect(() =>
+    domain.saveGoal(domain.saveBroker(domain.emptyState, broker), overflow),
+  ).toThrow(/end date.*9999/i);
+  expect(() => domain.goalProgress(overflow, [])).toThrow(/end date.*9999/i);
+  expect(() =>
+    domain.parseState({
+      version: 1,
+      brokers: [broker],
+      entries: [],
+      goals: [overflow],
+    }),
+  ).toThrow(/end date.*9999/i);
+});
+it.each([
+  ["2024-02-29", "2024-02-29"],
+  ["2024-12-31", "2025-01-01"],
+  ["9999-12-31", "9999-12-31"],
+])(
+  "round-trips explicit inclusive dates %s to %s in version 1",
+  (start, end) => {
+    const explicit = { ...goal, start, end };
+    const parsed = domain.parseState({
+      version: 1,
+      brokers: [broker],
+      entries: [],
+      goals: [explicit],
+    });
+    expect(parsed.goals).toEqual([explicit]);
+    expect(
+      domain.goalProgress(parsed.goals[0], [{ ...entry, date: end }]),
+    ).toEqual({ earned: 50, percent: 50, end });
+  },
+);
+it("preserves legacy monthly and weekly backup deadlines without adding end", () => {
+  const goals = [
+    { ...goal, period: "monthly" as const, start: "2024-02-01" },
+    { ...goal, id: "weekly" },
+  ];
+  const parsed = domain.parseState({
+    version: 1,
+    brokers: [broker],
+    entries: [],
+    goals,
+  });
+  expect(parsed.goals).toEqual(goals);
+  expect(parsed.goals.every((g) => !("end" in g))).toBe(true);
+  expect(parsed.goals.map((g) => domain.goalProgress(g, []).end)).toEqual([
+    "2024-02-29",
+    "2024-03-06",
+  ]);
+  expect(domain.goalProgress({ ...goal, start: "9999-12-25" }, []).end).toBe(
+    "9999-12-31",
+  );
+});
 it("upserts a goal by its broker, period and start", () => {
   const state = domain.saveGoal(
     domain.saveBroker(domain.emptyState, broker),
@@ -101,7 +197,7 @@ it.each([
   { target: 1e13 },
   { period: "daily" },
   { start: "2024-02-30" },
-  { period: "monthly", start: "2024-02-02" },
+
   { brokerId: "missing" },
   { id: "" },
 ])("rejects invalid goal %j", (change) => {
@@ -226,7 +322,7 @@ it.each([
   { ...backup, entries: [{ ...entry, date: "2024-02-30" }] },
   { ...backup, goals: [goal, goal] },
   { ...backup, goals: [goal, { ...goal, id: "g2" }] },
-  { ...backup, goals: [{ ...goal, period: "monthly" }] },
+
   { ...backup, goals: [{ ...goal, target: NaN }] },
   { ...backup, goals: [{ ...goal, brokerId: "missing" }] },
 ])("rejects malformed backup %#", (input) => {

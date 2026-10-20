@@ -18,6 +18,7 @@ export type Goal = {
   brokerId: string;
   period: "weekly" | "monthly";
   start: string;
+  end?: string;
   target: number;
 };
 export type State = {
@@ -131,6 +132,17 @@ function sameGoal(a: Goal, b: Goal) {
     a.brokerId === b.brokerId && a.period === b.period && a.start === b.start
   );
 }
+function goalEnd(goal: Goal): string {
+  if (goal.end !== undefined) return goal.end;
+  const date = new Date(`${goal.start}T00:00:00.000Z`);
+  if (goal.period === "weekly") date.setUTCDate(date.getUTCDate() + 6);
+  else date.setUTCMonth(date.getUTCMonth() + 1, 0);
+  check(
+    date.getUTCFullYear() <= 9999,
+    "Goal end date exceeds year 9999; choose an explicit end date.",
+  );
+  return date.toISOString().slice(0, 10);
+}
 function validateGoal(goal: Goal) {
   identifier(goal.id);
   identifier(goal.brokerId);
@@ -139,10 +151,11 @@ function validateGoal(goal: Goal) {
     "Goal period must be weekly or monthly.",
   );
   isoDate(goal.start);
-  check(
-    goal.period !== "monthly" || goal.start.endsWith("-01"),
-    "Monthly goals must start on the first day.",
-  );
+  if (goal.end !== undefined) {
+    isoDate(goal.end);
+    check(goal.end >= goal.start, "End date must be on or after start date.");
+  }
+  goalEnd(goal);
   money(goal.target, "Goal target");
   check(goal.target > 0, "Goal target must be positive.");
 }
@@ -178,10 +191,7 @@ export function goalProgress(
   entries: Entry[],
 ): { earned: number; percent: number; end: string } {
   validateGoal(goal);
-  const date = new Date(`${goal.start}T00:00:00.000Z`);
-  if (goal.period === "weekly") date.setUTCDate(date.getUTCDate() + 6);
-  else date.setUTCMonth(date.getUTCMonth() + 1, 0);
-  const end = date.toISOString().slice(0, 10);
+  const end = goalEnd(goal);
   const earned =
     Math.round(
       entries

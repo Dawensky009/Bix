@@ -13,8 +13,11 @@ try {
   await page.goto("http://127.0.0.1:4174");
   // Explicit visual-test fixture, never shipped or inserted into the user workspace.
   await page.evaluate(() => {
-    const date = new Date();
-    const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    const relativeDate = (offset) => {
+      const date = new Date();
+      date.setDate(date.getDate() + offset);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    };
     localStorage.setItem(
       "bix.state.v1",
       JSON.stringify({
@@ -31,7 +34,7 @@ try {
           {
             id: "1",
             brokerId: "visual",
-            date: `${month}-01`,
+            date: relativeDate(-3),
             opening: 10000,
             closing: 10150,
             cashFlow: 0,
@@ -40,7 +43,7 @@ try {
           {
             id: "2",
             brokerId: "visual",
-            date: `${month}-02`,
+            date: relativeDate(-2),
             opening: 10150,
             closing: 10090,
             cashFlow: 0,
@@ -49,7 +52,7 @@ try {
           {
             id: "3",
             brokerId: "visual",
-            date: `${month}-03`,
+            date: relativeDate(-1),
             opening: 10090,
             closing: 10340,
             cashFlow: 0,
@@ -61,7 +64,8 @@ try {
             id: "g",
             brokerId: "visual",
             period: "monthly",
-            start: `${month}-01`,
+            start: relativeDate(-3),
+            end: relativeDate(27),
             target: 750,
           },
         ],
@@ -69,22 +73,28 @@ try {
     );
   });
   await page.reload();
-  for (const [name, width, height] of [
-    ["desktop", 1440, 1000],
-    ["mobile", 390, 844],
-  ]) {
-    await page.setViewportSize({ width, height });
-    await page.screenshot({
-      path: resolve(output, `${name}.png`),
-      fullPage: true,
-    });
-    console.log(
-      name,
-      await page.evaluate(() => ({
-        width: innerWidth,
-        scrollWidth: document.documentElement.scrollWidth,
-      })),
-    );
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((t) => {
+      localStorage.setItem("bix.theme", t);
+    }, theme);
+    await page.reload();
+    for (const [name, width, height] of [
+      ["desktop", 1440, 1000],
+      ["mobile", 390, 844],
+    ]) {
+      await page.setViewportSize({ width, height });
+      await page.screenshot({
+        path: resolve(output, `${theme}-${name}.png`),
+        fullPage: true,
+      });
+      console.log(
+        name,
+        await page.evaluate(() => ({
+          width: innerWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+        })),
+      );
+    }
   }
   console.log("Browser errors:", errors);
   if (errors.length) process.exitCode = 1;

@@ -8,6 +8,17 @@ import {
   type Entry,
 } from "./domain";
 import { Modal, money } from "./ui";
+function suggestedEnd(start: string, period: Goal["period"]): string {
+  const date = new Date(`${start}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime())) return "";
+  if (period === "weekly") date.setUTCDate(date.getUTCDate() + 6);
+  else {
+    const day = date.getUTCDate();
+    date.setUTCMonth(date.getUTCMonth() + 2, 0);
+    date.setUTCDate(Math.min(day, date.getUTCDate()));
+  }
+  return date.getUTCFullYear() > 9999 ? "" : date.toISOString().slice(0, 10);
+}
 export function Goals({
   broker,
   goals,
@@ -26,6 +37,9 @@ export function Goals({
   const [editing, setEditing] = useState<Goal | "new" | null>(null);
   const [period, setPeriod] = useState<Goal["period"]>("monthly");
   const [error, setError] = useState("");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [customEnd, setCustomEnd] = useState(false);
   const today = localDate();
   const relevant = [...goals].sort((a, b) => b.start.localeCompare(a.start));
   const visible = compact
@@ -38,6 +52,11 @@ export function Goals({
   function open(g: Goal | "new") {
     setError("");
     setPeriod(g === "new" ? "monthly" : g.period);
+    setStart(g === "new" ? today : g.start);
+    setEnd(
+      g === "new" ? suggestedEnd(today, "monthly") : goalProgress(g, []).end,
+    );
+    setCustomEnd(g !== "new");
     setEditing(g);
   }
   function submit(e: FormEvent<HTMLFormElement>) {
@@ -49,6 +68,7 @@ export function Goals({
         brokerId: broker.id,
         period,
         start: String(f.get("start")),
+        end: String(f.get("end")),
         target: Number(f.get("target")),
       });
       setEditing(null);
@@ -142,7 +162,11 @@ export function Goals({
               <select
                 autoFocus
                 value={period}
-                onChange={(e) => setPeriod(e.target.value as Goal["period"])}
+                onChange={(e) => {
+                  const next = e.target.value as Goal["period"];
+                  setPeriod(next);
+                  if (!customEnd) setEnd(suggestedEnd(start, next));
+                }}
               >
                 <option value="monthly">Monthly</option>
                 <option value="weekly">Weekly</option>
@@ -151,23 +175,33 @@ export function Goals({
             <label>
               Start date
               <input
-                key={period}
                 name="start"
                 type="date"
                 required
-                defaultValue={
-                  editing === "new"
-                    ? period === "monthly"
-                      ? today.slice(0, 8) + "01"
-                      : today
-                    : editing.start
-                }
+                max="9999-12-31"
+                value={start}
+                onChange={(e) => {
+                  setStart(e.target.value);
+                  if (!customEnd) setEnd(suggestedEnd(e.target.value, period));
+                }}
+              />
+            </label>
+            <label>
+              End date
+              <input
+                name="end"
+                type="date"
+                required
+                max="9999-12-31"
+                value={end}
+                onChange={(e) => {
+                  setEnd(e.target.value);
+                  setCustomEnd(true);
+                }}
               />
             </label>
             <small className="muted">
-              {period === "monthly"
-                ? "Use the first day of the calendar month."
-                : "Covers seven calendar days, including the start date."}
+              Start and end dates are inclusive. Choose any date range.
             </small>
             <label>
               Profit target

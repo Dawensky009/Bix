@@ -51,13 +51,11 @@ test("reject duplicate day, edit loss, delete entry", async ({ page }) => {
 test("import valid backup and preserve it after reload", async ({ page }) => {
   await page.goto("/");
   page.once("dialog", (d) => d.accept());
-  await page
-    .getByLabel("Import backup")
-    .setInputFiles({
-      name: "valid.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(state)),
-    });
+  await page.getByLabel("Import backup").setInputFiles({
+    name: "valid.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(state)),
+  });
   await expect(page.getByLabel("Active broker")).toContainText(
     "Integrity account",
   );
@@ -82,13 +80,11 @@ test("invalid stored data stays untouched until explicit recovery import", async
     "broken",
   );
   page.once("dialog", (d) => d.accept());
-  await page
-    .getByLabel("Import backup")
-    .setInputFiles({
-      name: "valid.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(state)),
-    });
+  await page.getByLabel("Import backup").setInputFiles({
+    name: "valid.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(state)),
+  });
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByLabel("Active broker")).toContainText(
     "Integrity account",
@@ -126,12 +122,65 @@ test("refuse overwriting a change from another tab", async ({
   await page.getByRole("button", { name: "Save entry", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("another tab");
 });
+test("legacy goals retain deadlines on reload and edit", async ({ page }) => {
+  await page.goto("/");
+  const legacy = {
+    ...state,
+    goals: [
+      {
+        id: "month",
+        brokerId: "b",
+        period: "monthly",
+        start: "2026-01-01",
+        target: 200,
+      },
+      {
+        id: "week",
+        brokerId: "b",
+        period: "weekly",
+        start: "2026-01-15",
+        target: 200,
+      },
+    ],
+  };
+  await page.evaluate(
+    (s) => localStorage.setItem("bix.state.v1", JSON.stringify(s)),
+    legacy,
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Goals", exact: true }).click();
+  await expect(
+    page.getByTestId("goal-progress").filter({ hasText: "Monthly goal" }),
+  ).toContainText("2026-01-01 → 2026-01-31");
+  const weekly = page
+    .getByTestId("goal-progress")
+    .filter({ hasText: "Weekly goal" });
+  await expect(weekly).toContainText("2026-01-15 → 2026-01-21");
+  expect(
+    await page.evaluate(
+      () => JSON.parse(localStorage.getItem("bix.state.v1")!).goals,
+    ),
+  ).toEqual(legacy.goals);
+  await weekly.getByRole("button", { name: "Edit goal" }).click();
+  await expect(page.getByLabel("End date", { exact: true })).toHaveValue(
+    "2026-01-21",
+  );
+  await page.getByRole("button", { name: "Save goal", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Goals", exact: true }).click();
+  await expect(
+    page.getByTestId("goal-progress").filter({ hasText: "Weekly goal" }),
+  ).toContainText("2026-01-15 → 2026-01-21");
+});
 test("weekly goal and broker isolation", async ({ page }) => {
   await seed(page);
   await page.getByRole("button", { name: "Goals", exact: true }).click();
   await page.getByRole("button", { name: "Set goal", exact: true }).click();
   await page.getByLabel("Goal period").selectOption("weekly");
   await page.getByLabel("Start date").fill("2026-01-15");
+  await expect(page.getByLabel("End date", { exact: true })).toHaveValue(
+    "2026-01-21",
+  );
   await page.getByLabel("Profit target").fill("200");
   await page.getByRole("button", { name: "Save goal", exact: true }).click();
   await expect(page.getByTestId("goal-progress")).toContainText("50.0%");
