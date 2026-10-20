@@ -8,6 +8,9 @@ import {
   Wallet,
   ShieldCheck,
   ArrowUpRight,
+  BarChart2,
+  Layers,
+  ArrowDownUp,
 } from "lucide-react";
 import {
   emptyState,
@@ -16,28 +19,37 @@ import {
   deleteEntry,
   deleteBroker,
   saveGoal,
+  saveTransaction,
+  deleteTransaction,
+  accountBalance,
   performance,
+  localDate,
   type Entry,
   type Broker,
+  type Transaction,
   type State,
 } from "./domain";
 import { EntryForm, Journal, BalanceChart } from "./Journal";
 import { Goals } from "./Goals";
 import { Forecast } from "./Forecast";
+import { Statistics } from "./Statistics";
 import { loadState, persistState, STORAGE_KEY } from "./storage";
 import { Modal } from "./ui";
 import { Backup } from "./Backup";
 import { ThemeToggle } from "./ThemeToggle";
 import { InstallApp } from "./InstallApp";
 
-type View = "Overview" | "Daily journal" | "Goals" | "Forecast";
+type View = "Overview" | "Daily journal" | "Statistics" | "Goals" | "Forecast";
+
 const money = (value: number, currency = "USD") =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
     maximumFractionDigits: 2,
   }).format(value);
+
 const uid = () => crypto.randomUUID();
+
 function initial() {
   try {
     return { state: loadState(localStorage), error: "" };
@@ -45,6 +57,7 @@ function initial() {
     return { state: emptyState, error: String(e) };
   }
 }
+
 export default function App() {
   const [boot, setBoot] = useState(initial);
   const rawSnapshot = useRef<string | null | undefined>(undefined);
@@ -60,14 +73,23 @@ export default function App() {
   const [view, setView] = useState<View>("Overview");
   const [activeId, setActiveId] = useState(state.brokers[0]?.id ?? "");
   const [brokerModal, setBrokerModal] = useState<Broker | "new" | null>(null);
+  const [txModal, setTxModal] = useState<Transaction | "new" | null>(null);
+  const [txType, setTxType] = useState<"deposit" | "withdrawal">("withdrawal");
+
   const broker =
     state.brokers.find((b) => b.id === activeId) ?? state.brokers[0];
   const currency = broker?.currency ?? "USD";
+
   const [entryModal, setEntryModal] = useState<Entry | "new" | null>(null);
   const entries = state.entries
     .filter((e) => e.brokerId === broker?.id)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const balance = entries.at(-1)?.closing ?? broker?.initialBalance ?? 0;
+
+  // Balance includes any transactions logged after the last entry
+  const balance = broker
+    ? accountBalance(broker, state.entries, state.transactions)
+    : 0;
+
   const pnl = entries.reduce(
     (sum, e) => sum + performance(e.opening, e.closing, e.cashFlow).pnl,
     0,
@@ -75,14 +97,61 @@ export default function App() {
   const wins = entries.filter(
     (e) => performance(e.opening, e.closing, e.cashFlow).pnl > 0,
   ).length;
-  const removeEntry = (entry: Entry) => {
+
+  // Portfolio: all-broker aggregate
+  const portfolioItems = state.brokers.map((b) => {
+    const bEntries = state.entries
+      .filter((e) => e.brokerId === b.id)
+      .sort((a, z) => a.date.localeCompare(z.date));
+    const lastBalance = bEntries.at(-1)?.closing ?? b.initialBalance;
+    const bPnl = bEntries.reduce(
+      (s, e) => s + performance(e.opening, e.closing, e.cashFlow).pnl,
+      0,
+    );
+    const bWins = bEntries.filter(
+      (e) => performance(e.opening, e.closing, e.cashFlow).pnl > 0,
+    ).length;
+    return {
+      broker: b,
+      lastBalance,
+      pnl: bPnl,
+      days: bEntries.length,
+      wins: bWins,
+    };
+  });
+  const totalPortfolio = portfolioItems.reduce((s, x) => s + x.lastBalance, 0);
+  const totalPortfolioPnl = portfolioItems.reduce((s, x) => s + x.pnl, 0);
+
+  function removeEntry(entry: Entry) {
     if (
       window.confirm(
         `Delete the entry for ${entry.date}? This cannot be undone.`,
       )
     )
       attempt(() => commit(deleteEntry(state, entry.id)));
-  };
+  }
+
+  function removeTx(tx: Transaction) {
+    if (window.confirm("Delete this transaction? This cannot be undone."))
+      attempt(() => commit(deleteTransaction(state, tx.id)));
+  }
+
+  function onTransaction(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    attempt(() => {
+      const raw = Number(data.get("amount"));
+      const tx: Transaction = {
+        id: txModal === "new" ? uid() : (txModal as Transaction).id,
+        brokerId: broker!.id,
+        date: String(data.get("date")),
+        amount: txType === "withdrawal" ? -Math.abs(raw) : Math.abs(raw),
+        note: String(data.get("note")),
+      };
+      commit(saveTransaction(state, tx));
+      setTxModal(null);
+    });
+  }
 
   function commit(next: State, recovering = false) {
     if (boot.error && !recovering)
@@ -99,6 +168,7 @@ export default function App() {
     setError("");
     if (recovering) setBoot({ state: next, error: "" });
   }
+
   function attempt(action: () => void) {
     try {
       action();
@@ -106,6 +176,7 @@ export default function App() {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
+
   function onBroker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -121,6 +192,23 @@ export default function App() {
       setBrokerModal(null);
     });
   }
+
+  const NAV_ITEMS = [
+    { label: "Overview" as View, icon: LayoutDashboard },
+    { label: "Daily journal" as View, icon: BookOpen },
+    { label: "Statistics" as View, icon: BarChart2 },
+    { label: "Goals" as View, icon: Target },
+    { label: "Forecast" as View, icon: TrendingUp },
+  ] as const;
+
+  const PAGE_HEADINGS: Record<View, { title: string; sub: string }> = {
+    Overview: { title: "Your edge starts here.", sub: "A clear picture of your trading." },
+    "Daily journal": { title: "Daily journal", sub: "Every trade recorded, every lesson kept." },
+    Statistics: { title: "Statistics", sub: "Patterns, progress, performance." },
+    Goals: { title: "Goals", sub: "Set targets, track progress." },
+    Forecast: { title: "Forecast", sub: "Two scenarios. No guarantees." },
+  };
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -135,21 +223,14 @@ export default function App() {
         </a>
         <div className="workspace-label">YOUR WORKSPACE</div>
         <nav aria-label="Main navigation">
-          {(
-            [
-              { label: "Overview", icon: LayoutDashboard },
-              { label: "Daily journal", icon: BookOpen },
-              { label: "Goals", icon: Target },
-              { label: "Forecast", icon: TrendingUp },
-            ] as const
-          ).map(({ label, icon: Icon }) => (
+          {NAV_ITEMS.map(({ label, icon: Icon }) => (
             <button
               key={label}
               aria-current={view === label ? "page" : undefined}
               className={view === label ? "nav-item active" : "nav-item"}
               onClick={() => setView(label)}
             >
-              <Icon size={19} />
+              <Icon size={18} />
               {label}
               {view === label && <span className="nav-dot" />}
             </button>
@@ -157,7 +238,7 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="privacy-card">
-            <ShieldCheck size={22} />
+            <ShieldCheck size={20} />
             <strong>Just you. Your data.</strong>
             <p>
               Stored on this device.
@@ -174,6 +255,7 @@ export default function App() {
           </div>
         </div>
       </aside>
+
       <div className="main-shell">
         <header className="topbar">
           <div className="breadcrumb">
@@ -184,7 +266,7 @@ export default function App() {
             <InstallApp />
             <ThemeToggle />
             <div className="account-picker">
-              <Wallet size={17} />
+              <Wallet size={16} />
               <select
                 aria-label="Active broker"
                 value={broker?.id ?? ""}
@@ -205,130 +287,300 @@ export default function App() {
                 title="Add broker"
                 onClick={() => setBrokerModal("new")}
               >
-                <Plus size={18} />
+                <Plus size={17} />
               </button>
             </div>
           </div>
         </header>
+
         <main>
           <div className="page-heading">
             <div>
-              <h1>{view === "Overview" ? "Your edge starts here." : view}</h1>
-              <p>A clear picture of your trading. One day at a time.</p>
+              <h1>{PAGE_HEADINGS[view].title}</h1>
+              <p>{PAGE_HEADINGS[view].sub}</p>
             </div>
-            <button
-              className="primary"
-              disabled={!broker}
-              onClick={() => setEntryModal("new")}
-            >
-              <Plus size={17} /> New entry
-            </button>
+            <div className="page-heading-actions">
+              {broker && (
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setTxType("withdrawal");
+                    setTxModal("new");
+                  }}
+                  title="Record a deposit or withdrawal"
+                >
+                  <ArrowDownUp size={15} /> Transaction
+                </button>
+              )}
+              {view !== "Statistics" && view !== "Forecast" && (
+                <button
+                  className="primary"
+                  disabled={!broker}
+                  onClick={() => setEntryModal("new")}
+                >
+                  <Plus size={16} /> New entry
+                </button>
+              )}
+            </div>
           </div>
+
           {error && !brokerModal && (
             <div role="alert" className="error">
               {error}
             </div>
           )}
-          <section className="metrics">
-            <article className="metric">
-              <span>
-                Account balance <Wallet size={17} />
-              </span>
-              <h2>{money(balance, currency)}</h2>
-              <small>
-                {entries.length ? "Latest closing balance" : "Starting capital"}
-              </small>
-            </article>
-            <article className="metric">
-              <span>
-                Net profit & loss <ArrowUpRight size={17} />
-              </span>
-              <h2 className={pnl < 0 ? "negative" : "positive"}>
-                {money(pnl, currency)}
-              </h2>
-              <small>All time · excluding cash flows</small>
-            </article>
-            <article className="metric">
-              <span>
-                Winning days <TrendingUp size={17} />
-              </span>
-              <h2>
-                {entries.length
-                  ? ((wins / entries.length) * 100).toFixed(0)
-                  : "—"}
-                <em> %</em>
-              </h2>
-              <small>Your consistency, measured</small>
-            </article>
-            <article className="metric">
-              <span>
-                Trading days <BookOpen size={17} />
-              </span>
-              <h2>{entries.length}</h2>
-              <small>Make every day a learning day</small>
-            </article>
-          </section>
+
           {!broker && (
             <section className="panel empty">
               <span className="empty-icon">
-                <TrendingUp size={30} />
+                <TrendingUp size={28} />
               </span>
-              <h2>
-                {broker
-                  ? "Your next chapter starts with a trade."
-                  : "Welcome to your trading workspace."}
-              </h2>
+              <h2>Welcome to your trading workspace.</h2>
               <p>
-                {broker
-                  ? "Log your opening and closing balances to start tracking your progress."
-                  : "Add your first broker account. Your journal, goals and insights will grow from there."}
+                Add your first broker account. Your journal, goals and insights
+                will grow from there.
               </p>
-              {!broker && (
-                <button
-                  className="primary"
-                  onClick={() => setBrokerModal("new")}
-                >
-                  <Plus size={16} /> Create your first account
-                </button>
-              )}
+              <button className="primary" onClick={() => setBrokerModal("new")}>
+                <Plus size={15} /> Create your first account
+              </button>
             </section>
           )}
+
           {broker && (
             <>
+              {/* Overview — stat strip + portfolio + chart + journal */}
               {view === "Overview" && (
-                <div className="overview-grid">
-                  <BalanceChart
+                <>
+                  {/* Stat strip — replaces four equal cards */}
+                  <section className="stat-strip">
+                    <div className="ss-primary">
+                      <span className="ss-label">
+                        <Wallet size={12} /> Account balance
+                      </span>
+                      <div className="ss-balance">{money(balance, currency)}</div>
+                      <small className="ss-hint">
+                        {entries.length ? "Latest closing" : "Starting capital"}
+                      </small>
+                    </div>
+
+                    <div className="ss-sep" />
+
+                    <div className="ss-stat">
+                      <span className="ss-label">
+                        <ArrowUpRight size={12} /> Net P&L
+                      </span>
+                      <strong
+                        className={`ss-num ${pnl > 0 ? "positive" : pnl < 0 ? "negative" : ""}`}
+                      >
+                        {pnl > 0 ? "+" : ""}
+                        {money(pnl, currency)}
+                      </strong>
+                      {entries.length > 0 && broker && (
+                        <small
+                          className={`ss-delta ${pnl >= 0 ? "positive" : "negative"}`}
+                        >
+                          {pnl >= 0 ? "▲" : "▼"}{" "}
+                          {Math.abs(
+                            broker.initialBalance !== 0
+                              ? (pnl / broker.initialBalance) * 100
+                              : 0,
+                          ).toFixed(1)}
+                          %
+                        </small>
+                      )}
+                    </div>
+
+                    <div className="ss-sep" />
+
+                    <div className="ss-stat">
+                      <span className="ss-label">
+                        <TrendingUp size={12} /> Win rate
+                      </span>
+                      <strong className="ss-num">
+                        {entries.length
+                          ? ((wins / entries.length) * 100).toFixed(0) + "%"
+                          : "—"}
+                      </strong>
+                      {entries.length > 0 && (
+                        <>
+                          <div
+                            className="wl-bar"
+                            role="img"
+                            aria-label={`${wins} wins, ${entries.length - wins} losses`}
+                          >
+                            <div
+                              className="wl-w"
+                              style={{
+                                flex: wins || 0,
+                              }}
+                            />
+                            <div
+                              className="wl-l"
+                              style={{ flex: entries.length - wins || 0 }}
+                            />
+                          </div>
+                          <small className="ss-hint">
+                            {wins}W · {entries.length - wins}L
+                          </small>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="ss-sep" />
+
+                    <div className="ss-stat">
+                      <span className="ss-label">
+                        <BookOpen size={12} /> Trading days
+                      </span>
+                      <strong className="ss-num">{entries.length}</strong>
+                      <small className="ss-hint">
+                        {entries.length === 0
+                          ? "Start your journey"
+                          : "Days recorded"}
+                      </small>
+                    </div>
+                  </section>
+
+                  {/* Portfolio overview — only when there are multiple brokers */}
+                  {state.brokers.length > 1 && (
+                    <section className="panel portfolio-panel">
+                      <div className="section-heading">
+                        <div>
+                          <h2>Portfolio overview</h2>
+                          <p>Combined total across {state.brokers.length} broker accounts</p>
+                        </div>
+                        <Layers size={18} />
+                      </div>
+                      <div className="portfolio-totals">
+                        <div className="ptotal-item">
+                          <span className="ptotal-label">Total balance</span>
+                          <strong className="ptotal-val">
+                            {money(totalPortfolio, currency)}
+                          </strong>
+                        </div>
+                        <div className="ptotal-divider" />
+                        <div className="ptotal-item">
+                          <span className="ptotal-label">Combined P&L</span>
+                          <strong
+                            className={`ptotal-val ${totalPortfolioPnl > 0 ? "positive" : totalPortfolioPnl < 0 ? "negative" : ""}`}
+                          >
+                            {money(totalPortfolioPnl, currency)}
+                          </strong>
+                        </div>
+                        <div className="ptotal-divider" />
+                        <div className="ptotal-item">
+                          <span className="ptotal-label">Active accounts</span>
+                          <strong className="ptotal-val">
+                            {portfolioItems.filter((x) => x.days > 0).length}
+                            <em> / {state.brokers.length}</em>
+                          </strong>
+                        </div>
+                      </div>
+                      <div className="broker-rows">
+                        {portfolioItems.map((item) => {
+                          const share =
+                            totalPortfolio > 0
+                              ? (item.lastBalance / totalPortfolio) * 100
+                              : 0;
+                          return (
+                            <button
+                              key={item.broker.id}
+                              className={`broker-row${item.broker.id === activeId ? " active" : ""}`}
+                              onClick={() => setActiveId(item.broker.id)}
+                              aria-pressed={item.broker.id === activeId}
+                            >
+                              <div className="broker-row-left">
+                                <span className="broker-avatar">
+                                  {item.broker.name.slice(0, 1).toUpperCase()}
+                                </span>
+                                <div>
+                                  <strong>{item.broker.name}</strong>
+                                  <small>{item.broker.currency} · {item.days} days</small>
+                                </div>
+                              </div>
+                              <div className="broker-row-right">
+                                <span className="broker-balance">
+                                  {money(item.lastBalance, item.broker.currency)}
+                                </span>
+                                <span
+                                  className={`broker-pnl ${item.pnl > 0 ? "positive" : item.pnl < 0 ? "negative" : ""}`}
+                                >
+                                  {item.pnl > 0 ? "+" : ""}
+                                  {money(item.pnl, item.broker.currency)}
+                                </span>
+                              </div>
+                              <div
+                                className="broker-share-bar"
+                                style={{ width: `${share}%` }}
+                              />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+
+                  <div className="overview-grid">
+                    <BalanceChart
+                      entries={entries}
+                      initialBalance={broker.initialBalance}
+                      currency={currency}
+                    />
+                    <Goals
+                      broker={broker}
+                      goals={state.goals.filter((g) => g.brokerId === broker.id)}
+                      entries={entries}
+                      onSave={(goal) => commit(saveGoal(state, goal))}
+                      onDelete={() => {}}
+                      compact
+                    />
+                  </div>
+
+                  <Journal
                     entries={entries}
-                    initialBalance={broker.initialBalance}
+                    transactions={state.transactions.filter(
+                      (t) => t.brokerId === broker.id,
+                    )}
                     currency={currency}
-                  />
-                  <Goals
-                    broker={broker}
-                    goals={state.goals.filter((g) => g.brokerId === broker.id)}
-                    entries={entries}
-                    onSave={(goal) => commit(saveGoal(state, goal))}
-                    onDelete={() => {}}
+                    onEdit={setEntryModal}
+                    onDelete={removeEntry}
+                    onEditTx={(tx) => {
+                      setTxType(tx.amount >= 0 ? "deposit" : "withdrawal");
+                      setTxModal(tx);
+                    }}
+                    onDeleteTx={removeTx}
                     compact
                   />
-                </div>
+                </>
               )}
-              {(view === "Overview" || view === "Daily journal") && (
+
+              {view === "Daily journal" && (
                 <Journal
                   entries={entries}
+                  transactions={state.transactions.filter(
+                    (t) => t.brokerId === broker.id,
+                  )}
                   currency={currency}
                   onEdit={setEntryModal}
                   onDelete={removeEntry}
-                  compact={view === "Overview"}
+                  onEditTx={(tx) => {
+                    setTxType(tx.amount >= 0 ? "deposit" : "withdrawal");
+                    setTxModal(tx);
+                  }}
+                  onDeleteTx={removeTx}
+                  compact={false}
                 />
               )}
-              {view === "Forecast" && (
-                <Forecast
+
+              {view === "Statistics" && (
+                <Statistics
                   key={broker.id}
-                  broker={broker}
-                  entries={entries}
-                  goals={state.goals.filter((g) => g.brokerId === broker.id)}
+                  entries={state.entries}
+                  brokers={state.brokers}
+                  activeBrokerId={activeId}
                 />
               )}
+
               {view === "Goals" && (
                 <Goals
                   key={broker.id}
@@ -347,8 +599,18 @@ export default function App() {
                   }}
                 />
               )}
+
+              {view === "Forecast" && (
+                <Forecast
+                  key={broker.id}
+                  broker={broker}
+                  entries={entries}
+                  goals={state.goals.filter((g) => g.brokerId === broker.id)}
+                />
+              )}
             </>
           )}
+
           {broker && (
             <button
               className="text-button"
@@ -357,6 +619,7 @@ export default function App() {
               Manage broker
             </button>
           )}
+
           <Backup
             state={state}
             recovery={!!boot.error}
@@ -365,6 +628,7 @@ export default function App() {
               setActiveId(next.brokers[0]?.id ?? "");
             }}
           />
+
           <footer>
             <span>
               <span className="status-dot" /> Private by design. Saved on this
@@ -374,6 +638,7 @@ export default function App() {
           </footer>
         </main>
       </div>
+
       {entryModal && broker && (
         <EntryForm
           broker={broker}
@@ -383,6 +648,108 @@ export default function App() {
           close={() => setEntryModal(null)}
         />
       )}
+
+      {txModal && broker && (
+        <Modal
+          title={
+            txModal === "new"
+              ? "Record a transaction"
+              : txType === "deposit"
+              ? "Edit deposit"
+              : "Edit withdrawal"
+          }
+          close={() => setTxModal(null)}
+        >
+          <p>
+            Deposits and withdrawals are excluded from trading P&L. The opening
+            balance of your next entry will be adjusted automatically.
+          </p>
+          {error && (
+            <div role="alert" className="error">
+              {error}
+            </div>
+          )}
+          <form onSubmit={onTransaction}>
+            {/* Type toggle */}
+            <div className="tx-type-toggle">
+              <button
+                type="button"
+                className={txType === "deposit" ? "tx-type-btn active" : "tx-type-btn"}
+                onClick={() => setTxType("deposit")}
+              >
+                Deposit
+              </button>
+              <button
+                type="button"
+                className={txType === "withdrawal" ? "tx-type-btn active" : "tx-type-btn"}
+                onClick={() => setTxType("withdrawal")}
+              >
+                Withdrawal
+              </button>
+            </div>
+            <label>
+              Date
+              <input
+                autoFocus
+                name="date"
+                type="date"
+                required
+                max={localDate()}
+                defaultValue={
+                  txModal === "new" ? localDate() : (txModal as Transaction).date
+                }
+              />
+            </label>
+            <label>
+              Amount ({broker.currency})
+              <input
+                name="amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                max="1000000000000"
+                required
+                defaultValue={
+                  txModal === "new"
+                    ? ""
+                    : Math.abs((txModal as Transaction).amount)
+                }
+                placeholder="e.g. 500.00"
+              />
+            </label>
+            <label>
+              Note (optional)
+              <textarea
+                name="note"
+                maxLength={500}
+                placeholder="e.g. Monthly profit withdrawal"
+                defaultValue={
+                  txModal === "new" ? "" : (txModal as Transaction).note
+                }
+              />
+            </label>
+            <button className="primary" type="submit">
+              Save transaction
+            </button>
+            {txModal !== "new" && (
+              <button
+                type="button"
+                className="secondary negative"
+                onClick={() => {
+                  if (window.confirm("Delete this transaction?"))
+                    attempt(() => {
+                      commit(deleteTransaction(state, (txModal as Transaction).id));
+                      setTxModal(null);
+                    });
+                }}
+              >
+                Delete transaction
+              </button>
+            )}
+          </form>
+        </Modal>
+      )}
+
       {brokerModal && (
         <Modal
           title={brokerModal === "new" ? "Add a broker" : "Manage broker"}

@@ -21,17 +21,26 @@ export type Goal = {
   end?: string;
   target: number;
 };
+export type Transaction = {
+  id: string;
+  brokerId: string;
+  date: string;
+  amount: number; // positive = deposit, negative = withdrawal
+  note: string;
+};
 export type State = {
   version: 1;
   brokers: Broker[];
   entries: Entry[];
   goals: Goal[];
+  transactions: Transaction[];
 };
 export const emptyState: State = {
   version: 1,
   brokers: [],
   entries: [],
   goals: [],
+  transactions: [],
 };
 function check(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -242,6 +251,60 @@ export function forecast(
   return { balance: projected, rate };
 }
 
+function validateTransaction(tx: Transaction) {
+  identifier(tx.id);
+  identifier(tx.brokerId);
+  isoDate(tx.date);
+  check(tx.date <= localDate(), "Transaction date cannot be in the future.");
+  money(tx.amount, "Transaction amount");
+  check(tx.amount !== 0, "Transaction amount cannot be zero.");
+  check(
+    typeof tx.note === "string" && tx.note.length <= 500,
+    "Note must be at most 500 characters.",
+  );
+}
+export function saveTransaction(state: State, tx: Transaction): State {
+  validateTransaction(tx);
+  check(
+    state.brokers.some((b) => b.id === tx.brokerId),
+    "Broker does not exist.",
+  );
+  return {
+    ...state,
+    transactions: [
+      ...state.transactions.filter((t) => t.id !== tx.id),
+      { ...tx },
+    ],
+  };
+}
+export function deleteTransaction(state: State, id: string): State {
+  return {
+    ...state,
+    transactions: state.transactions.filter((t) => t.id !== id),
+  };
+}
+
+/**
+ * Returns the effective current balance for a broker:
+ * last recorded closing balance + any transactions logged after that entry.
+ */
+export function accountBalance(
+  broker: Broker,
+  entries: Entry[],
+  transactions: Transaction[],
+): number {
+  const sorted = [...entries]
+    .filter((e) => e.brokerId === broker.id)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const lastEntry = sorted.at(-1);
+  const base = lastEntry?.closing ?? broker.initialBalance;
+  const lastDate = lastEntry?.date ?? "";
+  const pending = transactions
+    .filter((t) => t.brokerId === broker.id && t.date > lastDate)
+    .reduce((s, t) => s + t.amount, 0);
+  return base + pending;
+}
+
 function record(value: unknown): asserts value is Record<string, unknown> {
   check(
     typeof value === "object" && value !== null && !Array.isArray(value),
@@ -257,7 +320,13 @@ export function parseState(input: unknown): State {
       Array.isArray(input.goals),
     "Invalid state: brokers, entries and goals must be arrays.",
   );
-  let state: State = { version: 1, brokers: [], entries: [], goals: [] };
+  let state: State = {
+    version: 1,
+    brokers: [],
+    entries: [],
+    goals: [],
+    transactions: [],
+  };
   for (const value of input.brokers) {
     record(value);
     const broker = value as unknown as Broker;
@@ -281,6 +350,19 @@ export function parseState(input: unknown): State {
       "Duplicate goal ID or period.",
     );
     state = saveGoal(state, goal);
+  }
+  // Backward-compatible: old backups have no transactions field
+  const rawTxs = Array.isArray((input as Record<string, unknown>).transactions)
+    ? ((input as Record<string, unknown>).transactions as unknown[])
+    : [];
+  for (const value of rawTxs) {
+    record(value);
+    const tx = value as unknown as Transaction;
+    check(
+      !state.transactions.some((t) => t.id === tx.id),
+      "Duplicate transaction ID.",
+    );
+    state = saveTransaction(state, tx);
   }
   return state;
 }
