@@ -1,8 +1,13 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, mockCloud } from "./fixtures";
 const fixture = {
-  version: 1,
+  version: 1 as const,
   brokers: [
-    { id: "b", name: "Test account", currency: "USD", initialBalance: 1000 },
+    {
+      id: "b",
+      name: "Test account",
+      currency: "USD" as const,
+      initialBalance: 1000,
+    },
   ],
   entries: [
     {
@@ -27,10 +32,7 @@ const fixture = {
   goals: [],
 };
 test("set monthly goal and track profit against target", async ({ page }) => {
-  await page.addInitScript(
-    (state) => localStorage.setItem("bix.state.v1", JSON.stringify(state)),
-    fixture,
-  );
+  const rows = await mockCloud(page, fixture);
   await page.goto("/");
   await page.getByRole("button", { name: "Goals", exact: true }).click();
   await page.getByRole("button", { name: "Set goal", exact: true }).click();
@@ -78,13 +80,8 @@ test("set monthly goal and track profit against target", async ({ page }) => {
   await page.getByLabel("End date", { exact: true }).fill("2026-01-15");
   await page.getByRole("button", { name: "Save goal", exact: true }).click();
   await expect(page.getByTestId("goal-progress")).toContainText("20.0%");
-  expect(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("bix.state.v1")!).goals[0].end,
-    ),
-  ).toBe("2026-01-15");
-  await page.getByRole("button", { name: "Forecast", exact: true }).click();
-  await page.getByLabel("Future trading sessions").fill("2");
-  await expect(page.getByTestId("projected-balance")).toHaveText("$1,464.10");
-  await expect(page.getByText("Not a prediction or a promise.")).toBeVisible();
+  expect(rows.goals[0].end_date).toBe("2026-01-15");
+  await page.reload();
+  await page.getByRole("button", { name: "Goals", exact: true }).click();
+  await expect(page.getByTestId("goal-progress")).toContainText("20.0%");
 });

@@ -1,4 +1,7 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, mockCloud } from "./fixtures";
+test.beforeEach(async ({ page }) => {
+  await mockCloud(page);
+});
 
 test("manage brokers, isolate accounts and export a backup", async ({
   page,
@@ -7,7 +10,7 @@ test("manage brokers, isolate accounts and export a backup", async ({
   for (const name of ["First account", "Second account"]) {
     await page.getByRole("button", { name: "Add broker", exact: true }).click();
     await page.getByLabel("Broker name").fill(name);
-    await page.getByLabel("Initial balance").fill("1000");
+    await page.getByLabel("Your deposit").fill("1000");
     await page
       .getByRole("button", { name: "Save broker", exact: true })
       .click();

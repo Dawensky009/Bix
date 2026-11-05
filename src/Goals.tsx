@@ -32,7 +32,7 @@ export function Goals({
   broker: Broker;
   goals: Goal[];
   entries: Entry[];
-  onSave: (goal: Goal) => void;
+  onSave: (goal: Goal) => Promise<boolean>;
   onDelete: (id: string) => void;
   compact?: boolean;
 }) {
@@ -64,11 +64,11 @@ export function Goals({
     setEditing(g);
   }
 
-  function submit(e: FormEvent<HTMLFormElement>) {
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     try {
-      onSave({
+      const saved = await onSave({
         id: editing === "new" ? crypto.randomUUID() : (editing as Goal).id,
         brokerId: broker.id,
         period,
@@ -76,7 +76,7 @@ export function Goals({
         end: String(f.get("end")),
         target: Number(f.get("target")),
       });
-      setEditing(null);
+      if (saved) setEditing(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -111,24 +111,28 @@ export function Goals({
           const startDate = new Date(`${goal.start}T00:00:00Z`);
           const totalDays = Math.max(
             1,
-            Math.ceil((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1,
+            Math.ceil((endDate.getTime() - startDate.getTime()) / 86_400_000) +
+              1,
           );
           const elapsedDays = Math.max(
             1,
             Math.ceil((nowMs - startDate.getTime()) / 86_400_000),
           );
           const expectedPct = Math.min(100, (elapsedDays / totalDays) * 100);
-          const paceStatus =
-            isComplete
-              ? "done"
-              : isExpired
+          const paceStatus = isComplete
+            ? "done"
+            : isExpired
               ? "expired"
               : clampedPct >= expectedPct - 5
-              ? "on-track"
-              : "behind";
+                ? "on-track"
+                : "behind";
 
           return (
-            <article className="goal-item" data-testid="goal-progress" key={goal.id}>
+            <article
+              className="goal-item"
+              data-testid="goal-progress"
+              key={goal.id}
+            >
               <div className="goal-header">
                 <div className="goal-meta">
                   <span className="tag">
@@ -139,10 +143,10 @@ export function Goals({
                       paceStatus === "done"
                         ? "pace-done"
                         : paceStatus === "on-track"
-                        ? "pace-ok"
-                        : paceStatus === "expired"
-                        ? "pace-expired"
-                        : "pace-behind"
+                          ? "pace-ok"
+                          : paceStatus === "expired"
+                            ? "pace-expired"
+                            : "pace-behind"
                     }`}
                   >
                     {paceStatus === "done" && <CheckCircle2 size={11} />}
@@ -152,10 +156,10 @@ export function Goals({
                     {paceStatus === "done"
                       ? "Reached"
                       : paceStatus === "on-track"
-                      ? "On pace"
-                      : paceStatus === "expired"
-                      ? "Expired"
-                      : "Behind"}
+                        ? "On pace"
+                        : paceStatus === "expired"
+                          ? "Expired"
+                          : "Behind"}
                   </span>
                 </div>
                 <span className="goal-pct-label">{clampedPct.toFixed(1)}%</span>
@@ -221,7 +225,11 @@ export function Goals({
               </div>
 
               <div className="goal-actions">
-                <button className="text-button" onClick={() => open(goal)}>
+                <button
+                  className="text-button"
+                  aria-label="Edit goal"
+                  onClick={() => open(goal)}
+                >
                   Edit
                 </button>
                 {!compact && (

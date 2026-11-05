@@ -10,10 +10,32 @@ function rowToBroker(r: Record<string, unknown>): Broker {
     name: r.name as string,
     currency: r.currency as Broker["currency"],
     initialBalance: r.initial_balance as number,
+    ownDeposit: (r.own_deposit ?? undefined) as number | undefined,
+    bonusPercent: (r.bonus_percent ?? undefined) as number | undefined,
+    turnoverRequired: (r.turnover_required ?? undefined) as number | undefined,
+    initialNetTurnover: (r.initial_net_turnover ?? undefined) as
+      number | undefined,
+    initialBonusProfit: (r.initial_bonus_profit ?? undefined) as
+      number | undefined,
+    currentBalance: (r.current_balance ?? undefined) as number | undefined,
+    baselineDate: (r.baseline_date ?? undefined) as string | undefined,
   };
 }
 function brokerToRow(uid: string, b: Broker) {
-  return { id: b.id, user_id: uid, name: b.name, currency: b.currency, initial_balance: b.initialBalance };
+  return {
+    id: b.id,
+    user_id: uid,
+    name: b.name,
+    currency: b.currency,
+    initial_balance: b.initialBalance,
+    own_deposit: b.ownDeposit ?? null,
+    bonus_percent: b.bonusPercent ?? null,
+    turnover_required: b.turnoverRequired ?? null,
+    initial_net_turnover: b.initialNetTurnover ?? null,
+    initial_bonus_profit: b.initialBonusProfit ?? null,
+    current_balance: b.currentBalance ?? null,
+    baseline_date: b.baselineDate ?? null,
+  };
 }
 
 function rowToEntry(r: Record<string, unknown>): Entry {
@@ -25,10 +47,27 @@ function rowToEntry(r: Record<string, unknown>): Entry {
     closing: r.closing as number,
     cashFlow: r.cash_flow as number,
     note: (r.note ?? "") as string,
+    netTurnover: (r.net_turnover ?? undefined) as number | undefined,
+    bonusProfit: (r.bonus_profit ?? undefined) as number | undefined,
+    bonusStatus: (r.bonus_status ?? undefined) as Entry["bonusStatus"],
+    reconciled: (r.reconciled ?? undefined) as boolean | undefined,
   };
 }
 function entryToRow(uid: string, e: Entry) {
-  return { id: e.id, user_id: uid, broker_id: e.brokerId, date: e.date, opening: e.opening, closing: e.closing, cash_flow: e.cashFlow, note: e.note };
+  return {
+    id: e.id,
+    user_id: uid,
+    broker_id: e.brokerId,
+    date: e.date,
+    opening: e.opening,
+    closing: e.closing,
+    cash_flow: e.cashFlow,
+    note: e.note,
+    net_turnover: e.netTurnover ?? null,
+    bonus_profit: e.bonusProfit ?? null,
+    bonus_status: e.bonusStatus ?? null,
+    reconciled: e.reconciled ?? null,
+  };
 }
 
 function rowToGoal(r: Record<string, unknown>): Goal {
@@ -42,7 +81,15 @@ function rowToGoal(r: Record<string, unknown>): Goal {
   };
 }
 function goalToRow(uid: string, g: Goal) {
-  return { id: g.id, user_id: uid, broker_id: g.brokerId, period: g.period, start_date: g.start, end_date: g.end ?? null, target: g.target };
+  return {
+    id: g.id,
+    user_id: uid,
+    broker_id: g.brokerId,
+    period: g.period,
+    start_date: g.start,
+    end_date: g.end ?? null,
+    target: g.target,
+  };
 }
 
 function rowToTx(r: Record<string, unknown>): Transaction {
@@ -52,10 +99,27 @@ function rowToTx(r: Record<string, unknown>): Transaction {
     date: r.date as string,
     amount: r.amount as number,
     note: (r.note ?? "") as string,
+    bonusDeduction: (r.bonus_deduction ?? undefined) as number | undefined,
+    postBalance: (r.post_balance ?? undefined) as number | undefined,
+    bonusStatus: (r.bonus_status ?? undefined) as Transaction["bonusStatus"],
+    afterClose: (r.after_close ?? undefined) as boolean | undefined,
+    order: (r.sort_order ?? undefined) as number | undefined,
   };
 }
 function txToRow(uid: string, t: Transaction) {
-  return { id: t.id, user_id: uid, broker_id: t.brokerId, date: t.date, amount: t.amount, note: t.note };
+  return {
+    id: t.id,
+    user_id: uid,
+    broker_id: t.brokerId,
+    date: t.date,
+    amount: t.amount,
+    note: t.note,
+    bonus_deduction: t.bonusDeduction ?? null,
+    post_balance: t.postBalance ?? null,
+    bonus_status: t.bonusStatus ?? null,
+    after_close: t.afterClose ?? null,
+    sort_order: t.order ?? null,
+  };
 }
 
 // ── Fetch all data for a user ─────────────────────────────────────────────────
@@ -84,42 +148,66 @@ export async function fetchState(userId: string): Promise<State> {
 
 export async function dbUpsertBroker(uid: string, b: Broker) {
   const { error } = await supabase.from("brokers").upsert(brokerToRow(uid, b));
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 }
 export async function dbDeleteBroker(uid: string, id: string) {
   // Delete dependents first (no CASCADE defined in schema)
-  await supabase.from("transactions").delete().eq("broker_id", id).eq("user_id", uid);
+  await supabase
+    .from("transactions")
+    .delete()
+    .eq("broker_id", id)
+    .eq("user_id", uid);
   await supabase.from("goals").delete().eq("broker_id", id).eq("user_id", uid);
-  await supabase.from("entries").delete().eq("broker_id", id).eq("user_id", uid);
-  const { error } = await supabase.from("brokers").delete().eq("id", id).eq("user_id", uid);
-  if (error) throw error;
+  await supabase
+    .from("entries")
+    .delete()
+    .eq("broker_id", id)
+    .eq("user_id", uid);
+  const { error } = await supabase
+    .from("brokers")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", uid);
+  if (error) throw new Error(error.message);
 }
 
 export async function dbUpsertEntry(uid: string, e: Entry) {
   const { error } = await supabase.from("entries").upsert(entryToRow(uid, e));
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 }
 export async function dbDeleteEntry(uid: string, id: string) {
-  const { error } = await supabase.from("entries").delete().eq("id", id).eq("user_id", uid);
-  if (error) throw error;
+  const { error } = await supabase
+    .from("entries")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", uid);
+  if (error) throw new Error(error.message);
 }
 
 export async function dbUpsertGoal(uid: string, g: Goal) {
   const { error } = await supabase.from("goals").upsert(goalToRow(uid, g));
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 }
 export async function dbDeleteGoal(uid: string, id: string) {
-  const { error } = await supabase.from("goals").delete().eq("id", id).eq("user_id", uid);
-  if (error) throw error;
+  const { error } = await supabase
+    .from("goals")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", uid);
+  if (error) throw new Error(error.message);
 }
 
 export async function dbUpsertTransaction(uid: string, t: Transaction) {
   const { error } = await supabase.from("transactions").upsert(txToRow(uid, t));
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 }
 export async function dbDeleteTransaction(uid: string, id: string) {
-  const { error } = await supabase.from("transactions").delete().eq("id", id).eq("user_id", uid);
-  if (error) throw error;
+  const { error } = await supabase
+    .from("transactions")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", uid);
+  if (error) throw new Error(error.message);
 }
 
 // ── Typed write descriptor (used by commit) ───────────────────────────────────
@@ -134,42 +222,40 @@ export type DbWrite =
   | { kind: "tx"; tx: Transaction }
   | { kind: "tx-del"; id: string };
 
-export async function executeWrite(userId: string, write: DbWrite): Promise<void> {
+export async function executeWrite(
+  userId: string,
+  write: DbWrite,
+): Promise<void> {
   switch (write.kind) {
-    case "broker":     return dbUpsertBroker(userId, write.broker);
-    case "broker-del": return dbDeleteBroker(userId, write.id);
-    case "entry":      return dbUpsertEntry(userId, write.entry);
-    case "entry-del":  return dbDeleteEntry(userId, write.id);
-    case "goal":       return dbUpsertGoal(userId, write.goal);
-    case "goal-del":   return dbDeleteGoal(userId, write.id);
-    case "tx":         return dbUpsertTransaction(userId, write.tx);
-    case "tx-del":     return dbDeleteTransaction(userId, write.id);
+    case "broker":
+      return dbUpsertBroker(userId, write.broker);
+    case "broker-del":
+      return dbDeleteBroker(userId, write.id);
+    case "entry":
+      return dbUpsertEntry(userId, write.entry);
+    case "entry-del":
+      return dbDeleteEntry(userId, write.id);
+    case "goal":
+      return dbUpsertGoal(userId, write.goal);
+    case "goal-del":
+      return dbDeleteGoal(userId, write.id);
+    case "tx":
+      return dbUpsertTransaction(userId, write.tx);
+    case "tx-del":
+      return dbDeleteTransaction(userId, write.id);
   }
 }
 
 // ── Bulk import (for backup restore) ─────────────────────────────────────────
 
 export async function dbImportAll(userId: string, s: State): Promise<void> {
-  // Delete existing data, then insert new
-  await supabase.from("transactions").delete().eq("user_id", userId);
-  await supabase.from("goals").delete().eq("user_id", userId);
-  await supabase.from("entries").delete().eq("user_id", userId);
-  await supabase.from("brokers").delete().eq("user_id", userId);
-
-  if (s.brokers.length) {
-    const { error } = await supabase.from("brokers").insert(s.brokers.map((b) => brokerToRow(userId, b)));
-    if (error) throw error;
-  }
-  if (s.entries.length) {
-    const { error } = await supabase.from("entries").insert(s.entries.map((e) => entryToRow(userId, e)));
-    if (error) throw error;
-  }
-  if (s.goals.length) {
-    const { error } = await supabase.from("goals").insert(s.goals.map((g) => goalToRow(userId, g)));
-    if (error) throw error;
-  }
-  if (s.transactions.length) {
-    const { error } = await supabase.from("transactions").insert(s.transactions.map((t) => txToRow(userId, t)));
-    if (error) throw error;
-  }
+  const { error } = await supabase.rpc("bix_replace_state", {
+    payload: {
+      brokers: s.brokers.map((b) => brokerToRow(userId, b)),
+      entries: s.entries.map((e) => entryToRow(userId, e)),
+      goals: s.goals.map((g) => goalToRow(userId, g)),
+      transactions: s.transactions.map((t) => txToRow(userId, t)),
+    },
+  });
+  if (error) throw new Error(error.message);
 }

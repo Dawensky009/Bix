@@ -1,6 +1,18 @@
 import { useState, type FormEvent } from "react";
-import { Pencil, Trash2, BookOpen, ArrowDownLeft, ArrowUpRight as ArrowUpRightIcon } from "lucide-react";
-import { localDate, performance, type Broker, type Entry, type Transaction } from "./domain";
+import {
+  Pencil,
+  Trash2,
+  BookOpen,
+  ArrowDownLeft,
+  ArrowUpRight as ArrowUpRightIcon,
+} from "lucide-react";
+import {
+  localDate,
+  performance,
+  type Broker,
+  type Entry,
+  type Transaction,
+} from "./domain";
 import { Modal, money, pct } from "./ui";
 export function EntryForm({
   broker,
@@ -12,15 +24,15 @@ export function EntryForm({
   broker: Broker;
   entry: Entry | null;
   opening: number;
-  onSave: (entry: Entry) => void;
+  onSave: (entry: Entry) => Promise<boolean>;
   close: () => void;
 }) {
   const [error, setError] = useState("");
-  function submit(e: FormEvent<HTMLFormElement>) {
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     try {
-      onSave({
+      const saved = await onSave({
         id: entry?.id ?? crypto.randomUUID(),
         brokerId: broker.id,
         date: String(f.get("date")),
@@ -28,8 +40,21 @@ export function EntryForm({
         closing: Number(f.get("closing")),
         cashFlow: Number(f.get("cashFlow")),
         note: String(f.get("note")),
+        reconciled: entry ? entry.reconciled : true,
+        netTurnover:
+          f.get("netTurnover") === null
+            ? entry?.netTurnover
+            : Number(f.get("netTurnover")),
+        bonusProfit:
+          f.get("bonusProfit") === null
+            ? entry?.bonusProfit
+            : String(f.get("bonusProfit")).trim() === ""
+              ? undefined
+              : Number(f.get("bonusProfit")),
+        bonusStatus: (f.get("bonusStatus") ||
+          undefined) as Entry["bonusStatus"],
       });
-      close();
+      if (saved) close();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -57,18 +82,20 @@ export function EntryForm({
           />
         </label>
         <div className="form-grid">
-          <label>
-            Opening balance
-            <input
-              name="opening"
-              type="number"
-              min="0"
-              max="1000000000000"
-              step="0.01"
-              required
-              defaultValue={entry?.opening ?? opening}
-            />
-          </label>
+          {entry && !entry.reconciled && (
+            <label>
+              Opening balance
+              <input
+                name="opening"
+                type="number"
+                min="0"
+                max="1000000000000"
+                step="0.01"
+                required
+                defaultValue={entry.opening ?? opening}
+              />
+            </label>
+          )}
           <label>
             Closing balance
             <input
@@ -82,21 +109,80 @@ export function EntryForm({
             />
           </label>
         </div>
-        <label>
-          Net deposits / withdrawals
-          <input
-            name="cashFlow"
-            type="number"
-            min="-1000000000000"
-            max="1000000000000"
-            step="0.01"
-            required
-            defaultValue={entry?.cashFlow ?? 0}
-          />
-        </label>
+        {entry && !entry.reconciled && (
+          <label>
+            Net deposits / withdrawals
+            <input
+              name="cashFlow"
+              type="number"
+              min="-1000000000000"
+              max="1000000000000"
+              step="0.01"
+              required
+              defaultValue={entry?.cashFlow ?? 0}
+            />
+          </label>
+        )}
         <small className="muted">
-          Positive for deposits, negative for withdrawals. Excluded from P&L.
+          {entry && !entry.reconciled
+            ? "Legacy entry: manual cash flow is preserved. Include any bonus deduction as a negative cash flow, not a loss."
+            : "Opening and cash flow are reconciled from your history. Record each deposit or withdrawal once using Transaction."}
         </small>
+        {(broker.bonusPercent ?? 0) > 0 && (
+          <>
+            <label>
+              Cumulative net turnover
+              <input
+                name="netTurnover"
+                type="number"
+                min="0"
+                step="0.01"
+                required
+                defaultValue={entry?.netTurnover ?? ""}
+              />
+            </label>
+            <small className="muted">
+              Copy the cumulative net turnover shown by your broker, not today’s
+              turnover. This replaces the previous reading; it is never added to
+              it.
+            </small>
+            <label>
+              Broker bonus profit (optional override)
+              <input
+                name="bonusProfit"
+                type="number"
+                step="0.01"
+                aria-describedby="bonus-estimate-help"
+                defaultValue={entry?.bonusProfit ?? ""}
+              />
+            </label>
+            <p id="bonus-estimate-help" className="muted">
+              Leave blank for an automatic estimate while the bonus is active.
+              Enter the broker’s cumulative bonus profit to replace it; zero is
+              a manual reading. Clear this field to return to automatic.
+              Estimates use cash-flow-adjusted P&L × initial bonus principal /
+              (own deposit + initial bonus principal), added to the previous
+              reading or initial snapshot. This is not a guaranteed broker
+              formula. Loss estimates are floored at minus the initial bonus
+              principal; any deeper deficit is retained for later recovery. Free
+              balance is bounded between zero and the nonnegative total. Later
+              deposits or withdrawals do not change the initial ratio. Confirm
+              with your broker. No estimate is added on or after a
+              release/cancellation confirmation recorded before the daily close.
+            </p>
+            <label>
+              Broker bonus confirmation
+              <select
+                name="bonusStatus"
+                defaultValue={entry?.bonusStatus ?? ""}
+              >
+                <option value="">No new confirmation</option>
+                <option value="released">Broker confirmed release</option>
+                <option value="cancelled">Broker confirmed cancellation</option>
+              </select>
+            </label>
+          </>
+        )}
         <label>
           Trading notes
           <textarea
@@ -140,7 +226,20 @@ export function Journal({
   const rows: JournalRow[] = [
     ...entries.map((e) => ({ kind: "entry" as const, date: e.date, entry: e })),
     ...transactions.map((t) => ({ kind: "tx" as const, date: t.date, tx: t })),
-  ].sort((a, b) => b.date.localeCompare(a.date));
+  ].sort((a, b) => {
+    const phase = (row: JournalRow) =>
+      row.kind === "entry" ? 1 : row.tx.afterClose ? 2 : 0;
+    const order = (row: JournalRow) =>
+      row.kind === "tx" ? (row.tx.order ?? 0) : 0;
+    const id = (row: JournalRow) =>
+      row.kind === "tx" ? row.tx.id : row.entry.id;
+    return (
+      b.date.localeCompare(a.date) ||
+      phase(b) - phase(a) ||
+      order(b) - order(a) ||
+      id(b).localeCompare(id(a))
+    );
+  });
 
   const visible = compact ? rows.slice(0, 6) : rows;
   const totalEntries = entries.length;
@@ -202,6 +301,20 @@ export function Journal({
                           </span>
                           <strong>{tx.date}</strong>
                         </div>
+                        <small className="entry-note">
+                          {tx.afterClose
+                            ? "After journal closing"
+                            : "Before journal closing"}
+                          {` · Order ${tx.order ?? 0}`}
+                          {tx.bonusStatus ? ` · Bonus ${tx.bonusStatus}` : ""}
+                        </small>
+                        {tx.bonusDeduction !== undefined && (
+                          <small className="entry-note">
+                            Bonus deduction:{" "}
+                            {money(tx.bonusDeduction, currency)} · not trading
+                            P&L
+                          </small>
+                        )}
                         {tx.note && (
                           <small className="entry-note" title={tx.note}>
                             {tx.note}
@@ -209,8 +322,11 @@ export function Journal({
                         )}
                       </td>
                       <td className="tx-empty">—</td>
-                      <td className="tx-empty">—</td>
-                      <td className="tx-empty">—</td>
+                      <td>
+                        {tx.postBalance === undefined
+                          ? "—"
+                          : money(tx.postBalance, currency)}
+                      </td>
                       <td
                         className={isDeposit ? "positive" : "negative"}
                         style={{ fontWeight: 600 }}
@@ -218,6 +334,7 @@ export function Journal({
                         {isDeposit ? "+" : ""}
                         {money(tx.amount, currency)}
                       </td>
+                      <td className="tx-empty">—</td>
                       <td className="tx-empty">—</td>
                       <td>
                         <div className="row-actions">
@@ -251,6 +368,30 @@ export function Journal({
                   <tr key={e.id}>
                     <td>
                       <strong>{e.date}</strong>
+                      {e.netTurnover !== undefined && (
+                        <small className="entry-note">
+                          Net turnover (cumulative):{" "}
+                          {money(e.netTurnover, currency)}
+                        </small>
+                      )}
+                      {(e.bonusProfit !== undefined ||
+                        e.estimatedBonusProfit !== undefined) && (
+                        <small className="entry-note">
+                          {e.bonusProfit !== undefined
+                            ? "Broker-reported bonus profit"
+                            : "Estimated bonus profit"}
+                          :{" "}
+                          {money(
+                            e.bonusProfit ?? e.estimatedBonusProfit!,
+                            currency,
+                          )}
+                        </small>
+                      )}
+                      {e.bonusStatus && (
+                        <small className="entry-note">
+                          Bonus {e.bonusStatus}
+                        </small>
+                      )}
                       {e.note && (
                         <small className="entry-note" title={e.note}>
                           {e.note}
@@ -319,7 +460,10 @@ export function BalanceChart({
   const range = max - min;
 
   // Chart area: x 56→700, y 12→172
-  const X0 = 56, X1 = 700, Y0 = 12, Y1 = 172;
+  const X0 = 56,
+    X1 = 700,
+    Y0 = 12,
+    Y1 = 172;
   const W = X1 - X0;
   const H = Y1 - Y0;
 
@@ -354,7 +498,10 @@ export function BalanceChart({
       <div className="section-heading">
         <div>
           <h2>Balance over time</h2>
-          <p>Account equity · {sorted.length} {sorted.length === 1 ? "entry" : "entries"}</p>
+          <p>
+            Account equity · {sorted.length}{" "}
+            {sorted.length === 1 ? "entry" : "entries"}
+          </p>
         </div>
         <div className="chart-header-right">
           <span
@@ -480,7 +627,13 @@ export function BalanceChart({
             </text>
           )}
           {lastDate && lastDate !== firstDate && (
-            <text x={X1} y="198" textAnchor="end" fontSize="10" fill="var(--muted)">
+            <text
+              x={X1}
+              y="198"
+              textAnchor="end"
+              fontSize="10"
+              fill="var(--muted)"
+            >
               {lastDate}
             </text>
           )}

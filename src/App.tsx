@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import {
   Plus,
   LayoutDashboard,
@@ -7,9 +7,7 @@ import {
   TrendingUp,
   Wallet,
   ShieldCheck,
-  ArrowUpRight,
   BarChart2,
-  Layers,
   ArrowDownUp,
 } from "lucide-react";
 import {
@@ -22,7 +20,8 @@ import {
   saveTransaction,
   deleteTransaction,
   accountBalance,
-  performance,
+  afterBaseline,
+  reconciledEntries,
   localDate,
   type Entry,
   type Broker,
@@ -31,7 +30,8 @@ import {
 } from "./domain";
 import { EntryForm, Journal, BalanceChart } from "./Journal";
 import { Goals } from "./Goals";
-import { Forecast } from "./Forecast";
+import { BonusOverview, BrokerFields } from "./Bonus";
+import { InstallApp } from "./InstallApp";
 import { Statistics } from "./Statistics";
 import { Modal } from "./ui";
 import { Backup } from "./Backup";
@@ -42,14 +42,7 @@ import { ProfileMenu } from "./ProfileMenu";
 import { fetchState, executeWrite, dbImportAll, type DbWrite } from "./db";
 import type { Session } from "@supabase/supabase-js";
 
-type View = "Overview" | "Daily journal" | "Statistics" | "Goals" | "Forecast";
-
-const money = (value: number, currency = "USD") =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2,
-  }).format(value);
+type View = "Overview" | "Daily journal" | "Statistics" | "Goals";
 
 const uid = () => crypto.randomUUID();
 
@@ -58,7 +51,9 @@ export default function App() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => subscription.unsubscribe();
   }, []);
 
@@ -74,6 +69,8 @@ function AppShell({ session }: { session: Session }) {
   const [error, setError] = useState("");
   const [view, setView] = useState<View>("Overview");
   const [activeId, setActiveId] = useState("");
+  const writing = useRef(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetchState(session.user.id)
@@ -96,7 +93,8 @@ function AppShell({ session }: { session: Session }) {
   const currency = broker?.currency ?? "USD";
 
   const [entryModal, setEntryModal] = useState<Entry | "new" | null>(null);
-  const entries = state.entries
+  const computedEntries = reconciledEntries(state);
+  const entries = computedEntries
     .filter((e) => e.brokerId === broker?.id)
     .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -105,52 +103,30 @@ function AppShell({ session }: { session: Session }) {
     ? accountBalance(broker, state.entries, state.transactions)
     : 0;
 
-  const pnl = entries.reduce(
-    (sum, e) => sum + performance(e.opening, e.closing, e.cashFlow).pnl,
-    0,
-  );
-  const wins = entries.filter(
-    (e) => performance(e.opening, e.closing, e.cashFlow).pnl > 0,
-  ).length;
-
-  // Portfolio: all-broker aggregate
-  const portfolioItems = state.brokers.map((b) => {
-    const bEntries = state.entries
-      .filter((e) => e.brokerId === b.id)
-      .sort((a, z) => a.date.localeCompare(z.date));
-    const lastBalance = bEntries.at(-1)?.closing ?? b.initialBalance;
-    const bPnl = bEntries.reduce(
-      (s, e) => s + performance(e.opening, e.closing, e.cashFlow).pnl,
-      0,
-    );
-    const bWins = bEntries.filter(
-      (e) => performance(e.opening, e.closing, e.cashFlow).pnl > 0,
-    ).length;
-    return {
-      broker: b,
-      lastBalance,
-      pnl: bPnl,
-      days: bEntries.length,
-      wins: bWins,
-    };
-  });
-  const totalPortfolio = portfolioItems.reduce((s, x) => s + x.lastBalance, 0);
-  const totalPortfolioPnl = portfolioItems.reduce((s, x) => s + x.pnl, 0);
-
   function removeEntry(entry: Entry) {
-    if (window.confirm(`Delete the entry for ${entry.date}? This cannot be undone.`))
-      void commit(deleteEntry(state, entry.id), { kind: "entry-del", id: entry.id });
+    if (
+      window.confirm(
+        `Delete the entry for ${entry.date}? This cannot be undone.`,
+      )
+    )
+      void commit(deleteEntry(state, entry.id), {
+        kind: "entry-del",
+        id: entry.id,
+      });
   }
 
   function removeTx(tx: Transaction) {
     if (window.confirm("Delete this transaction? This cannot be undone."))
-      void commit(deleteTransaction(state, tx.id), { kind: "tx-del", id: tx.id });
+      void commit(deleteTransaction(state, tx.id), {
+        kind: "tx-del",
+        id: tx.id,
+      });
   }
 
   function onTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    attempt(() => {
+    void attempt(async () => {
       const raw = Number(data.get("amount"));
       const tx: Transaction = {
         id: txModal === "new" ? uid() : (txModal as Transaction).id,
@@ -158,27 +134,40 @@ function AppShell({ session }: { session: Session }) {
         date: String(data.get("date")),
         amount: txType === "withdrawal" ? -Math.abs(raw) : Math.abs(raw),
         note: String(data.get("note")),
+        bonusDeduction:
+          txType === "withdrawal" ? Number(data.get("bonusDeduction")) : 0,
+        postBalance: Number(data.get("postBalance")),
+        bonusStatus: (data.get("bonusStatus") ||
+          undefined) as Transaction["bonusStatus"],
+        afterClose: data.get("timing") === "after",
+        order: Number(data.get("order")),
       };
       const next = saveTransaction(state, tx);
-      setTxModal(null);
-      void commit(next, { kind: "tx", tx });
+      if (await commit(next, { kind: "tx", tx })) setTxModal(null);
     });
   }
 
-  async function commit(next: State, write: DbWrite): Promise<void> {
-    setState(next);
+  async function commit(_next: State, write: DbWrite): Promise<boolean> {
+    if (writing.current) return false;
+    writing.current = true;
+    setSaving(true);
     setError("");
     try {
       await executeWrite(session.user.id, write);
+      setState(await fetchState(session.user.id));
+      return true;
     } catch (e) {
-      setState(state); // revert on DB error
       setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      writing.current = false;
+      setSaving(false);
     }
   }
 
-  function attempt(action: () => void) {
+  async function attempt(action: () => void | Promise<void>) {
     try {
-      action();
+      await action();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -187,17 +176,33 @@ function AppShell({ session }: { session: Session }) {
   function onBroker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    attempt(() => {
+    void attempt(async () => {
       const b: Broker = {
         id: brokerModal === "new" ? uid() : (brokerModal as Broker).id,
         name: String(data.get("name")),
         currency: String(data.get("currency")) as Broker["currency"],
-        initialBalance: Number(data.get("initialBalance")),
+        initialBalance:
+          brokerModal === "new" ? 0 : (brokerModal as Broker).initialBalance,
+        ownDeposit: Number(data.get("ownDeposit")),
+        bonusPercent: Number(data.get("bonusPercent")),
+        turnoverRequired: Number(data.get("turnoverRequired")),
+        initialNetTurnover: Number(data.get("initialNetTurnover")),
+        initialBonusProfit: Number(data.get("initialBonusProfit")),
+        currentBalance: data.get("currentBalance")
+          ? Number(data.get("currentBalance"))
+          : undefined,
+        baselineDate: String(data.get("baselineDate") || "") || undefined,
       };
       const next = saveBroker(state, b);
-      setActiveId(b.id);
-      setBrokerModal(null);
-      void commit(next, { kind: "broker", broker: b });
+      if (
+        await commit(next, {
+          kind: "broker",
+          broker: next.brokers.find((saved) => saved.id === b.id)!,
+        })
+      ) {
+        setActiveId(b.id);
+        setBrokerModal(null);
+      }
     });
   }
 
@@ -206,21 +211,28 @@ function AppShell({ session }: { session: Session }) {
     { label: "Daily journal" as View, icon: BookOpen },
     { label: "Statistics" as View, icon: BarChart2 },
     { label: "Goals" as View, icon: Target },
-    { label: "Forecast" as View, icon: TrendingUp },
   ] as const;
 
   const PAGE_HEADINGS: Record<View, { title: string; sub: string }> = {
-    Overview: { title: "Your edge starts here.", sub: "A clear picture of your trading." },
-    "Daily journal": { title: "Daily journal", sub: "Every trade recorded, every lesson kept." },
-    Statistics: { title: "Statistics", sub: "Patterns, progress, performance." },
+    Overview: {
+      title: "Your edge starts here.",
+      sub: "A clear picture of your trading.",
+    },
+    "Daily journal": {
+      title: "Daily journal",
+      sub: "Every trade recorded, every lesson kept.",
+    },
+    Statistics: {
+      title: "Statistics",
+      sub: "Patterns, progress, performance.",
+    },
     Goals: { title: "Goals", sub: "Set targets, track progress." },
-    Forecast: { title: "Forecast", sub: "Two scenarios. No guarantees." },
   };
 
   if (loading) return <div className="auth-loading" />;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" aria-busy={saving}>
       <aside className="sidebar">
         <a
           className="brand"
@@ -281,6 +293,7 @@ function AppShell({ session }: { session: Session }) {
           </div>
           <div className="header-actions">
             <ThemeToggle />
+            <InstallApp />
             <ProfileMenu session={session} />
             <div className="account-picker">
               <Wallet size={16} />
@@ -311,6 +324,7 @@ function AppShell({ session }: { session: Session }) {
         </header>
 
         <main>
+          {saving && <p role="status">Saving to your account…</p>}
           <div className="page-heading">
             <div>
               <h1>{PAGE_HEADINGS[view].title}</h1>
@@ -329,7 +343,7 @@ function AppShell({ session }: { session: Session }) {
                   <ArrowDownUp size={15} /> Transaction
                 </button>
               )}
-              {view !== "Statistics" && view !== "Forecast" && (
+              {view !== "Statistics" && (
                 <button
                   className="primary"
                   disabled={!broker}
@@ -368,189 +382,30 @@ function AppShell({ session }: { session: Session }) {
               {/* Overview — stat strip + portfolio + chart + journal */}
               {view === "Overview" && (
                 <>
-                  {/* Stat strip — replaces four equal cards */}
-                  <section className="stat-strip">
-                    <div className="ss-primary">
-                      <span className="ss-label">
-                        <Wallet size={12} /> Account balance
-                      </span>
-                      <div className="ss-balance">{money(balance, currency)}</div>
-                      <small className="ss-hint">
-                        {entries.length ? "Latest closing" : "Starting capital"}
-                      </small>
-                    </div>
-
-                    <div className="ss-sep" />
-
-                    <div className="ss-stat">
-                      <span className="ss-label">
-                        <ArrowUpRight size={12} /> Net P&L
-                      </span>
-                      <strong
-                        className={`ss-num ${pnl > 0 ? "positive" : pnl < 0 ? "negative" : ""}`}
-                      >
-                        {pnl > 0 ? "+" : ""}
-                        {money(pnl, currency)}
-                      </strong>
-                      {entries.length > 0 && broker && (
-                        <small
-                          className={`ss-delta ${pnl >= 0 ? "positive" : "negative"}`}
-                        >
-                          {pnl >= 0 ? "▲" : "▼"}{" "}
-                          {Math.abs(
-                            broker.initialBalance !== 0
-                              ? (pnl / broker.initialBalance) * 100
-                              : 0,
-                          ).toFixed(1)}
-                          %
-                        </small>
-                      )}
-                    </div>
-
-                    <div className="ss-sep" />
-
-                    <div className="ss-stat">
-                      <span className="ss-label">
-                        <TrendingUp size={12} /> Win rate
-                      </span>
-                      <strong className="ss-num">
-                        {entries.length
-                          ? ((wins / entries.length) * 100).toFixed(0) + "%"
-                          : "—"}
-                      </strong>
-                      {entries.length > 0 && (
-                        <>
-                          <div
-                            className="wl-bar"
-                            role="img"
-                            aria-label={`${wins} wins, ${entries.length - wins} losses`}
-                          >
-                            <div
-                              className="wl-w"
-                              style={{
-                                flex: wins || 0,
-                              }}
-                            />
-                            <div
-                              className="wl-l"
-                              style={{ flex: entries.length - wins || 0 }}
-                            />
-                          </div>
-                          <small className="ss-hint">
-                            {wins}W · {entries.length - wins}L
-                          </small>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="ss-sep" />
-
-                    <div className="ss-stat">
-                      <span className="ss-label">
-                        <BookOpen size={12} /> Trading days
-                      </span>
-                      <strong className="ss-num">{entries.length}</strong>
-                      <small className="ss-hint">
-                        {entries.length === 0
-                          ? "Start your journey"
-                          : "Days recorded"}
-                      </small>
-                    </div>
-                  </section>
-
-                  {/* Portfolio overview — only when there are multiple brokers */}
-                  {state.brokers.length > 1 && (
-                    <section className="panel portfolio-panel">
-                      <div className="section-heading">
-                        <div>
-                          <h2>Portfolio overview</h2>
-                          <p>Combined total across {state.brokers.length} broker accounts</p>
-                        </div>
-                        <Layers size={18} />
-                      </div>
-                      <div className="portfolio-totals">
-                        <div className="ptotal-item">
-                          <span className="ptotal-label">Total balance</span>
-                          <strong className="ptotal-val">
-                            {money(totalPortfolio, currency)}
-                          </strong>
-                        </div>
-                        <div className="ptotal-divider" />
-                        <div className="ptotal-item">
-                          <span className="ptotal-label">Combined P&L</span>
-                          <strong
-                            className={`ptotal-val ${totalPortfolioPnl > 0 ? "positive" : totalPortfolioPnl < 0 ? "negative" : ""}`}
-                          >
-                            {money(totalPortfolioPnl, currency)}
-                          </strong>
-                        </div>
-                        <div className="ptotal-divider" />
-                        <div className="ptotal-item">
-                          <span className="ptotal-label">Active accounts</span>
-                          <strong className="ptotal-val">
-                            {portfolioItems.filter((x) => x.days > 0).length}
-                            <em> / {state.brokers.length}</em>
-                          </strong>
-                        </div>
-                      </div>
-                      <div className="broker-rows">
-                        {portfolioItems.map((item) => {
-                          const share =
-                            totalPortfolio > 0
-                              ? (item.lastBalance / totalPortfolio) * 100
-                              : 0;
-                          return (
-                            <button
-                              key={item.broker.id}
-                              className={`broker-row${item.broker.id === activeId ? " active" : ""}`}
-                              onClick={() => setActiveId(item.broker.id)}
-                              aria-pressed={item.broker.id === activeId}
-                            >
-                              <div className="broker-row-left">
-                                <span className="broker-avatar">
-                                  {item.broker.name.slice(0, 1).toUpperCase()}
-                                </span>
-                                <div>
-                                  <strong>{item.broker.name}</strong>
-                                  <small>{item.broker.currency} · {item.days} days</small>
-                                </div>
-                              </div>
-                              <div className="broker-row-right">
-                                <span className="broker-balance">
-                                  {money(item.lastBalance, item.broker.currency)}
-                                </span>
-                                <span
-                                  className={`broker-pnl ${item.pnl > 0 ? "positive" : item.pnl < 0 ? "negative" : ""}`}
-                                >
-                                  {item.pnl > 0 ? "+" : ""}
-                                  {money(item.pnl, item.broker.currency)}
-                                </span>
-                              </div>
-                              <div
-                                className="broker-share-bar"
-                                style={{ width: `${share}%` }}
-                              />
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  )}
+                  <BonusOverview
+                    broker={broker}
+                    entries={entries}
+                    transactions={state.transactions}
+                  />
 
                   <div className="overview-grid">
                     <BalanceChart
                       entries={entries}
-                      initialBalance={broker.initialBalance}
+                      initialBalance={
+                        broker.currentBalance ?? broker.initialBalance
+                      }
                       currency={currency}
                     />
                     <Goals
                       broker={broker}
-                      goals={state.goals.filter((g) => g.brokerId === broker.id)}
+                      goals={state.goals.filter(
+                        (g) => g.brokerId === broker.id,
+                      )}
                       entries={entries}
-                      onSave={(goal) => attempt(() => {
+                      onSave={(goal) => {
                         const next = saveGoal(state, goal);
-                        void commit(next, { kind: "goal", goal });
-                      })}
+                        return commit(next, { kind: "goal", goal });
+                      }}
                       onDelete={() => {}}
                       compact
                     />
@@ -559,7 +414,9 @@ function AppShell({ session }: { session: Session }) {
                   <Journal
                     entries={entries}
                     transactions={state.transactions.filter(
-                      (t) => t.brokerId === broker.id,
+                      (t) =>
+                        t.brokerId === broker.id &&
+                        afterBaseline(broker, t.date),
                     )}
                     currency={currency}
                     onEdit={setEntryModal}
@@ -578,7 +435,8 @@ function AppShell({ session }: { session: Session }) {
                 <Journal
                   entries={entries}
                   transactions={state.transactions.filter(
-                    (t) => t.brokerId === broker.id,
+                    (t) =>
+                      t.brokerId === broker.id && afterBaseline(broker, t.date),
                   )}
                   currency={currency}
                   onEdit={setEntryModal}
@@ -595,7 +453,7 @@ function AppShell({ session }: { session: Session }) {
               {view === "Statistics" && (
                 <Statistics
                   key={broker.id}
-                  entries={state.entries}
+                  entries={computedEntries}
                   brokers={state.brokers}
                   activeBrokerId={activeId}
                 />
@@ -607,26 +465,20 @@ function AppShell({ session }: { session: Session }) {
                   broker={broker}
                   goals={state.goals.filter((g) => g.brokerId === broker.id)}
                   entries={entries}
-                  onSave={(goal) => attempt(() => {
+                  onSave={(goal) => {
                     const next = saveGoal(state, goal);
-                    void commit(next, { kind: "goal", goal });
-                  })}
+                    return commit(next, { kind: "goal", goal });
+                  }}
                   onDelete={(id) => {
                     if (window.confirm("Delete this goal?"))
                       void commit(
-                        { ...state, goals: state.goals.filter((g) => g.id !== id) },
+                        {
+                          ...state,
+                          goals: state.goals.filter((g) => g.id !== id),
+                        },
                         { kind: "goal-del", id },
                       );
                   }}
-                />
-              )}
-
-              {view === "Forecast" && (
-                <Forecast
-                  key={broker.id}
-                  broker={broker}
-                  entries={entries}
-                  goals={state.goals.filter((g) => g.brokerId === broker.id)}
                 />
               )}
             </>
@@ -643,18 +495,27 @@ function AppShell({ session }: { session: Session }) {
 
           <Backup
             state={state}
-            onImport={(next) => {
-              setState(next);
-              setActiveId(next.brokers[0]?.id ?? "");
-              dbImportAll(session.user.id, next).catch((e) =>
-                setError(e instanceof Error ? e.message : String(e)),
-              );
+            onImport={async (next) => {
+              if (writing.current)
+                throw new Error("A save is already in progress. Try again.");
+              writing.current = true;
+              setSaving(true);
+              try {
+                await dbImportAll(session.user.id, next);
+                const saved = await fetchState(session.user.id);
+                setState(saved);
+                setActiveId(saved.brokers[0]?.id ?? "");
+              } finally {
+                writing.current = false;
+                setSaving(false);
+              }
             }}
           />
 
           <footer>
             <span>
-              <span className="status-dot" /> Private by design. Synced to your account.
+              <span className="status-dot" /> Private by design. Synced to your
+              account.
             </span>
             <span>BIX / A little more clarity.</span>
           </footer>
@@ -666,10 +527,10 @@ function AppShell({ session }: { session: Session }) {
           broker={broker}
           entry={entryModal === "new" ? null : entryModal}
           opening={balance}
-          onSave={(entry) => attempt(() => {
+          onSave={(entry) => {
             const next = saveEntry(state, entry);
-            void commit(next, { kind: "entry", entry });
-          })}
+            return commit(next, { kind: "entry", entry });
+          }}
           close={() => setEntryModal(null)}
         />
       )}
@@ -680,8 +541,8 @@ function AppShell({ session }: { session: Session }) {
             txModal === "new"
               ? "Record a transaction"
               : txType === "deposit"
-              ? "Edit deposit"
-              : "Edit withdrawal"
+                ? "Edit deposit"
+                : "Edit withdrawal"
           }
           close={() => setTxModal(null)}
         >
@@ -699,14 +560,18 @@ function AppShell({ session }: { session: Session }) {
             <div className="tx-type-toggle">
               <button
                 type="button"
-                className={txType === "deposit" ? "tx-type-btn active" : "tx-type-btn"}
+                className={
+                  txType === "deposit" ? "tx-type-btn active" : "tx-type-btn"
+                }
                 onClick={() => setTxType("deposit")}
               >
                 Deposit
               </button>
               <button
                 type="button"
-                className={txType === "withdrawal" ? "tx-type-btn active" : "tx-type-btn"}
+                className={
+                  txType === "withdrawal" ? "tx-type-btn active" : "tx-type-btn"
+                }
                 onClick={() => setTxType("withdrawal")}
               >
                 Withdrawal
@@ -721,7 +586,9 @@ function AppShell({ session }: { session: Session }) {
                 required
                 max={localDate()}
                 defaultValue={
-                  txModal === "new" ? localDate() : (txModal as Transaction).date
+                  txModal === "new"
+                    ? localDate()
+                    : (txModal as Transaction).date
                 }
               />
             </label>
@@ -741,6 +608,95 @@ function AppShell({ session }: { session: Session }) {
                 }
                 placeholder="e.g. 500.00"
               />
+            </label>
+            <label>
+              Transaction timing
+              <select
+                name="timing"
+                defaultValue={
+                  txModal === "new" || txModal.afterClose ? "after" : "before"
+                }
+              >
+                <option value="before">
+                  Before this day’s journal closing
+                </option>
+                <option value="after">After this day’s journal closing</option>
+              </select>
+            </label>
+            <small className="muted">
+              Choose whether this transaction is already included in the
+              same-day closing balance. Later closing snapshots remain
+              authoritative.
+            </small>
+            <label>
+              Chronological order
+              <input
+                name="order"
+                type="number"
+                min="0"
+                max="1000000000000"
+                step="1"
+                required
+                aria-describedby="transaction-order-help"
+                defaultValue={
+                  txModal === "new"
+                    ? Math.max(
+                        0,
+                        ...state.transactions
+                          .filter((t) => t.brokerId === broker.id)
+                          .map((t) => t.order ?? 0),
+                      ) + 1
+                    : (txModal.order ?? 0)
+                }
+              />
+            </label>
+            <small id="transaction-order-help" className="muted">
+              Lower numbers happened earlier. Use a unique number within the
+              same broker, date and timing (before or after closing). When
+              backfilling, choose a lower number than later transactions;
+              insertion order does not determine chronology. Legacy transactions
+              without an order use 0.
+            </small>
+            {txType === "withdrawal" && (
+              <label>
+                Exact bonus deduction
+                <input
+                  name="bonusDeduction"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  defaultValue={
+                    txModal === "new" ? 0 : (txModal.bonusDeduction ?? 0)
+                  }
+                />
+              </label>
+            )}
+            <label>
+              Balance after transaction
+              <input
+                name="postBalance"
+                type="number"
+                min="0"
+                step="0.01"
+                required
+                defaultValue={
+                  txModal === "new" ? "" : (txModal.postBalance ?? "")
+                }
+              />
+            </label>
+            <label>
+              Broker bonus decision
+              <select
+                name="bonusStatus"
+                defaultValue={
+                  txModal === "new" ? "" : (txModal.bonusStatus ?? "")
+                }
+              >
+                <option value="">No new confirmation</option>
+                <option value="cancelled">Cancelled by broker</option>
+                <option value="released">Released by broker</option>
+              </select>
             </label>
             <label>
               Note (optional)
@@ -764,7 +720,10 @@ function AppShell({ session }: { session: Session }) {
                   if (window.confirm("Delete this transaction?")) {
                     const id = (txModal as Transaction).id;
                     setTxModal(null);
-                    void commit(deleteTransaction(state, id), { kind: "tx-del", id });
+                    void commit(deleteTransaction(state, id), {
+                      kind: "tx-del",
+                      id,
+                    });
                   }
                 }}
               >
@@ -798,35 +757,9 @@ function AppShell({ session }: { session: Session }) {
                 placeholder="e.g. My trading account"
               />
             </label>
-            <div className="form-grid">
-              <label>
-                Currency
-                <select
-                  name="currency"
-                  defaultValue={
-                    brokerModal === "new" ? "USD" : brokerModal.currency
-                  }
-                >
-                  <option>USD</option>
-                  <option>EUR</option>
-                  <option>HTG</option>
-                </select>
-              </label>
-              <label>
-                Initial balance
-                <input
-                  name="initialBalance"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="1000000000000"
-                  required
-                  defaultValue={
-                    brokerModal === "new" ? "" : brokerModal.initialBalance
-                  }
-                />
-              </label>
-            </div>
+            <BrokerFields
+              broker={brokerModal === "new" ? undefined : brokerModal}
+            />
             <button className="primary" type="submit">
               Save broker
             </button>
@@ -835,10 +768,17 @@ function AppShell({ session }: { session: Session }) {
                 type="button"
                 className="secondary negative"
                 onClick={() => {
-                  if (window.confirm("Delete this broker and ALL of its entries and goals? This cannot be undone.")) {
+                  if (
+                    window.confirm(
+                      "Delete this broker and ALL of its entries and goals? This cannot be undone.",
+                    )
+                  ) {
                     const id = brokerModal.id;
                     setBrokerModal(null);
-                    void commit(deleteBroker(state, id), { kind: "broker-del", id });
+                    void commit(deleteBroker(state, id), {
+                      kind: "broker-del",
+                      id,
+                    });
                   }
                 }}
               >

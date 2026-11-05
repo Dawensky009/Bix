@@ -1,61 +1,51 @@
 # BIX — Trading Journal
 
-A local-first trading journal PWA built with React, TypeScript and Vite. No broker credentials, broker API, account creation or cloud database. Interface language: English.
+Manual broker-account journal built with React, TypeScript, Vite and Supabase authentication/database. English interface. No broker credentials, broker API or trading execution.
 
-## Run locally
+## Run
 
-Requires **Node.js 24** (or Node 22.12+) and npm.
+Requires Node.js 24 (or 22.12+) and npm. Configure `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` for your Supabase project; never use a service-role key in the frontend.
 
 ```sh
 npm ci
 npm run dev
-```
-
-For the offline-capable production build:
-
-```sh
 npm run build
 npm run preview -- --port 4174
 ```
 
-Open http://127.0.0.1:4174. Offline caching is enabled in production, not the dev server. Open once online and let the service worker finish installing before going offline. Install with Chrome/Edge's address-bar install action, or Safari's Share → Add to Home Screen. Remote installation requires HTTPS. Updates take effect after closing all BIX tabs and reopening. An installed app has not been tested on physical iOS/Android hardware.
+**Deployment prerequisite:** review and apply `supabase/migrations/20261104_bonus.sql` to the existing schema before using the new persistence fields. This change has NOT applied that migration or changed a live database. Existing tables and per-user RLS policies are prerequisites. The migration adds nullable columns (no destructive backfill) and an invoker-rights atomic backup-restore RPC. Its execution and RLS behavior must be verified against your actual schema before deployment.
 
-## Themes and installation
+## Account and bonus
 
-The header offers a remembered dark/light theme toggle and **Install app**. Supported Chromium browsers show their native installer after a click; other browsers receive instructions, including Safari on iOS. The app never claims installation completed until the browser reports it (or it is running standalone). Dark cyan is the default. Theme preference is stored separately as `bix.theme`; switching themes does not change journal data.
+- Enter your own deposit and optional bonus percentage. Initial total is deposit plus bonus principal; required turnover comes from the broker.
+- For an already-active account, expand “Already trading on this account?” and enter current broker balance, its **snapshot date**, initial cumulative net turnover and bonus profit. This is an **end-of-day** starting snapshot, not invented historical trading P&L. New entries and transactions must be strictly after that date, including transactions marked after closing. Imported history on or before the cutoff remains in raw storage/backups but is excluded from balances, bonus status/readings, journal, chart, statistics and goal calculations. The first later entry reconciles only post-cutoff cash flows.
+- Legacy backups and cloud snapshots with no date retain their original all-history behavior (including the risk of double-counting activity already represented by a current balance). No date is guessed or backfilled. An unchanged legacy balance can still be saved without a date; new or changed balance snapshots require one. Add the correct date in Manage broker to adopt cutoff semantics. Review the resulting history when changing a cutoff.
+- **Total balance** includes bonus funds. **Free balance** excludes the nonnegative sum of active bonus principal and bonus profit, floored at zero and never above the nonnegative total. It is labeled **Estimated free balance** whenever the active bonus profit is estimated. Neither figure guarantees withdrawal eligibility.
+- Copy **cumulative net turnover**, never daily turnover. Each dated reading replaces the prior reading; readings are not summed.
+- **Bonus profit is estimated automatically** when the journal override is blank: initial snapshot bonus profit (zero if absent), plus subsequent cash-flow-adjusted P&L × initial bonus principal / (own deposit + initial bonus principal). Deposits, withdrawals and exact bonus deductions are not gains; they do not change this fixed initial allocation ratio. This is an estimate, not the broker’s actual allocation formula.
+- **Broker bonus profit (optional override)** accepts a cumulative broker reading, including zero or a negative value. It resets the reference for subsequent automatic entries. Clearing it returns that entry to automatic calculation. Historical edits/deletions recompute estimates chronologically; a later manual reading remains authoritative. Only display results are rounded to cents, not each daily allocation.
+- Estimated losses are floored at minus the initial bonus principal. The underlying deficit is retained so later recovery does not invent gains; manual broker readings are never clamped. Positive cumulative estimates are not capped by current equity (withdrawals may reduce equity), while free balance remains bounded. These are bookkeeping bounds, not broker loss-allocation rules. Check actual balances and eligibility with the broker.
+- No automatic increment is made on a closing entry that confirms release/cancellation, or after a confirmation before closing. A confirmation after closing retains that day’s estimate but stops later increments. Without intraday trade timestamps, BIX does not guess an allocation for the confirmation interval.
+- Reaching the turnover goal does not release a bonus. Record explicit broker release or cancellation in a journal entry or transaction. Historical figures are retained.
+- Forecast has been removed.
 
-## Features
+## Transactions and reconciliation
 
-- Add, select, rename and delete broker account labels (USD, EUR, HTG). Deletion explicitly confirms removal of that broker's entries and goals. Changing a currency label **does not convert** existing amounts.
-- Record one day per broker: date, opening/closing balance, net deposits/withdrawals and notes. Edit/delete records with duplicate and input validation.
-- Account dashboard, balance history, winning-day percentage and daily returns. Empty first-run state: no seeded or fabricated trading results.
-- Goals have freely selected start and end dates, both inclusive (for example October 19 through November 19). Weekly/monthly labels provide suggested periods, not restrictions. Month-end suggestions clamp to the last valid day. Existing version-1 goals without an end retain their original calendar-month/seven-day deadlines. Progress is net trading P&L, not deposits. Editing the same broker/period/start replaces that target.
-- History-based geometric-mean projection and a separate hypothetical constant-return scenario. Active goals show the remaining profit needed and deadline.
-- Versioned JSON export/import with explicit replacement confirmation, schema validation, a 5 MB import limit and raw-data export for recovery.
-- Local persistence, offline reload and offline data entry. Unsaved forms are not persisted.
+Record actual deposit/withdrawal amounts, the exact bonus deduction (zero if none), and the balance after the transaction. Choose whether it happened before or after that date’s journal closing. Set **Chronological order**: lower numbers happened earlier within the same broker/date/phase. It is editable, so a backfilled earlier transaction must have a lower number than a later transaction even if saved last. New saves reject duplicate orders within that scope. Balance, bonus status and the newest-first journal use this chronology. Legacy imports retain missing/duplicate orders: missing means 0 and ties use the transaction ID deterministically; assign unique orders when correcting ambiguous history.
 
-## Financial conventions
+New journal entries derive opening and cash flow from prior dated records. `P&L = closing − opening − cash flow`, including bonus deductions as negative external adjustments rather than trading losses. A before-close transaction is included once in that snapshot; an after-close transaction updates the current balance and the next journal interval. Editing/deleting a historical transaction or entry recalculates these derived values. Later reported closing/post-transaction balances remain authoritative; they are not silently rewritten. Review those snapshots after correcting history. Legacy journal entries retain their manually entered opening/cash-flow values; reconcile those manually, including deductions.
 
-`P&L = closing − opening − net cash flow`, where positive cash flow is a deposit and negative is a withdrawal. P&L is rounded to cents. `Return = P&L / opening × 100`; a zero opening balance has no percentage return. Balances are nonnegative, and each monetary input is limited to an absolute value of 1e12. This is a personal tracker using JavaScript numbers, not an accounting ledger.
+Turnover corrections may decrease a cumulative reading: BIX uses the latest dated value as reported. The balance chart shows recorded closing snapshots and includes external cash flows, not a pure performance curve. New account snapshots do not create journal gains. Goals use inclusive freely chosen date ranges and cash-flow-adjusted journal P&L.
 
-Balance chart points are equally spaced **recorded sessions**, not equally spaced calendar dates. The chart includes external cash flows; net P&L excludes them. The latest dated closing balance is the current account balance. Backdated edits do not rewrite later opening balances; reconcile them manually. Entries may intentionally have gaps between opening and previous closing balances.
+## Persistence and backups
 
-Forecasts require at least two usable recorded returns, skip zero-opening days and growth factors below zero, and include total-loss sessions. They compound the geometric mean from the most recent closing balance, with no future deposits or withdrawals. Future sessions are not calendar dates. Extreme overflowing projections are rejected. Hypothetical returns range from −100% to +100% per session. **Neither model is a prediction, guarantee or financial recommendation.**
+Authentication and financial records are stored in Supabase. Saving requires a connection; only the app shell is cached by the PWA. Unsaved forms are not persisted. Failures retain form input and show an error; successful writes are read back. Use one editing tab at a time: there is no cross-tab optimistic concurrency guarantee.
 
-## Privacy and backups
+Version-1 JSON backups remain accepted. A missing entry `bonusProfit` (SQL `bonus_profit = null`) means automatic; numeric values including zero mean broker overrides. Derived estimates are never saved as overrides or exported. No additional SQL migration is needed for estimation. Old records without bonus/transaction fields remain readable; entries without a bonus-profit reading now use the labeled estimate when a bonus is configured. Import validates before making an atomic replacement request; export first, keep backups private. Existing `bix.state.v1` browser bytes are not changed by the cloud application; export them from the previous app or recover that JSON manually for import. `src/storage.ts` retains the legacy reader. Changing currency labels does not convert amounts, and BIX does not combine different currencies into a fictitious portfolio total.
 
-Data lives in `localStorage` under `bix.state.v1` in the current browser and origin. No analytics, external fonts or runtime data APIs. Data is **not encrypted** and does not sync between devices, browser profiles, ports or origins. Clearing site data, private browsing expiry or browser storage eviction can erase it: export backups regularly. Keep exports private.
+## Theme and installation
 
-Invalid stored data is not silently replaced. Export the raw backup and import a repaired, valid version to recover. Storage errors are surfaced. A stale tab refuses to save if it detects that another tab changed the stored data; reload it first. The localStorage check/write is not a transactional multi-tab database; use one editing tab at a time.
-
-## Project layout
-
-- `src/domain.ts`: types, validation, P&L, broker/entry/goal operations and forecasting.
-- `src/storage.ts`: versioned loading and persistence; preserves invalid originals.
-- `src/App.tsx`: selected broker, navigation, save orchestration.
-- `src/Journal.tsx`, `Goals.tsx`, `Forecast.tsx`, `Backup.tsx`: feature UI.
-- `vite.config.ts`: web manifest, generated service worker and app-shell precache.
-- `src/*.test.ts`: unit tests; `e2e/*.spec.ts`: real-browser workflows.
+Dark cyan and equivalent light themes share all functions. Theme preference is separate at `bix.theme`. Install app uses the native prompt when available, otherwise browser-specific guidance. Mobile browser layout is tested; physical iOS/Android installation is not verified.
 
 ## Verification
 
@@ -67,10 +57,6 @@ npm run format:check
 npm audit
 ```
 
-Local Playwright tests use installed Microsoft Edge and one worker to avoid resource contention. CI uses Playwright Chromium (`npx playwright install --with-deps chromium`). E2E runs against the production preview on port 4174: stop any unrelated server on that port before testing. Tests use isolated browser contexts and explicit test fixtures, not your personal browser data.
+Playwright builds with an explicitly fake Supabase URL/key, intercepts its requests in isolated browser contexts, and never writes real user data. Local tests use Edge; CI uses installed Playwright Chromium. Stop any unrelated server on port 4174. These tests verify UI, mappings and simulated failures, **not live SQL, policies or cloud availability**. Screenshot fixtures are clearly labeled and captured under `.impeccable/review/` in desktop/mobile and both themes by `e2e/mobile-content.spec.ts`.
 
-`BIX_SCREENSHOTS=<absolute directory> node scripts/capture-ui.mjs` captures desktop/mobile views with a clearly labelled disposable test account, while the production preview is running. `node scripts/generate-icons.mjs` regenerates PWA icons from `public/icon.svg` using Edge.
-
-## Hosting
-
-The output is the static `dist/` directory; relative asset URLs support root or subdirectory hosting. Serve via HTTPS, avoid long immutable caching on `index.html`, `sw.js` and the manifest. No production hosting is configured or deployed by this repository. Pushing code is not deploying the app.
+No commit, push or deployment is implied by local verification.

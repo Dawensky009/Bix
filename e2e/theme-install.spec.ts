@@ -1,4 +1,7 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, mockCloud } from "./fixtures";
+test.beforeEach(async ({ page }) => {
+  await mockCloud(page);
+});
 test("install action provides browser instructions when prompt is absent", async ({
   page,
 }) => {
@@ -15,7 +18,11 @@ test("native install prompt is used only after user click", async ({
   page,
 }) => {
   await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Install BIX", exact: true }),
+  ).toBeVisible();
   await page.evaluate(() => {
+    // The authenticated shell must mount its install listener before this event.
     const e = new Event("beforeinstallprompt", { cancelable: true });
     Object.assign(e, {
       prompt: async () => {

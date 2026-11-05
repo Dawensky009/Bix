@@ -22,11 +22,17 @@ export function ProfileMenu({ session }: { session: Session }) {
 
   async function changePassword(e: FormEvent) {
     e.preventDefault();
-    if (pw !== pw2) { setMsg({ text: "Passwords don't match.", ok: false }); return; }
+    if (pw !== pw2) {
+      setMsg({ text: "Passwords don't match.", ok: false });
+      return;
+    }
     setLoading(true);
     const { error } = await supabase.auth.updateUser({ password: pw });
     setLoading(false);
-    if (error) { setMsg({ text: error.message, ok: false }); return; }
+    if (error) {
+      setMsg({ text: error.message, ok: false });
+      return;
+    }
     setMsg({ text: "Password updated!", ok: true });
     setTimeout(close, 1500);
   }
@@ -51,7 +57,11 @@ export function ProfileMenu({ session }: { session: Session }) {
                 <strong className="pm-label">Account</strong>
                 <span className="pm-email">{email}</span>
               </div>
-              <button className="icon-button" onClick={close} aria-label="Close">
+              <button
+                className="icon-button"
+                onClick={close}
+                aria-label="Close"
+              >
                 <X size={14} />
               </button>
             </div>
@@ -60,7 +70,10 @@ export function ProfileMenu({ session }: { session: Session }) {
               <div className="pm-actions">
                 <button
                   className="pm-item"
-                  onClick={() => { setChangingPw(true); setMsg(null); }}
+                  onClick={() => {
+                    setChangingPw(true);
+                    setMsg(null);
+                  }}
                 >
                   <KeyRound size={15} />
                   Change password
@@ -101,7 +114,10 @@ export function ProfileMenu({ session }: { session: Session }) {
                   <button
                     type="button"
                     className="secondary"
-                    onClick={() => { setChangingPw(false); setMsg(null); }}
+                    onClick={() => {
+                      setChangingPw(false);
+                      setMsg(null);
+                    }}
                   >
                     Cancel
                   </button>

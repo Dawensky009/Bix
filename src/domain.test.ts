@@ -221,6 +221,7 @@ it("deletes entries immutably and cascades broker removal without affecting othe
     brokers: [{ ...broker, id: "other", name: "Broker" }],
     entries: [],
     goals: [],
+    transactions: [],
   });
 });
 it("measures seven inclusive goal days across a month boundary excluding other brokers", () => {
@@ -242,49 +243,6 @@ it.each([
     ]),
   ).toEqual({ earned: 50, percent: 50, end });
 });
-it("forecasts a geometric daily return from the latest closing regardless of input order", () => {
-  const entries = [
-    { ...entry, date: "2024-03-01", opening: 100, closing: 80, cashFlow: 0 },
-    { ...entry, date: "2024-02-29", opening: 100, closing: 125, cashFlow: 0 },
-  ];
-  expect(domain.forecast(entries, 1000, 10).rate).toBeCloseTo(0);
-  expect(domain.forecast(entries, 1000, 10).balance).toBeCloseTo(80);
-  expect(entries[0].date).toBe("2024-03-01");
-});
-it("leaves balance unchanged until two usable returns exist", () => {
-  expect(domain.forecast([], 1000, 10)).toEqual({ balance: 1000, rate: null });
-  expect(domain.forecast([entry], 1000, 10)).toEqual({
-    balance: 950,
-    rate: null,
-  });
-  expect(
-    domain.forecast(
-      [entry, { ...entry, opening: 0 }, { ...entry, cashFlow: 2000 }],
-      1000,
-      10,
-    ),
-  ).toEqual({ balance: 950, rate: null });
-});
-it("compounds losses and handles complete loss without NaN", () => {
-  const loss = { ...entry, opening: 100, closing: 90, cashFlow: 0 };
-  expect(domain.forecast([loss, loss], 1000, 2).balance).toBeCloseTo(72.9);
-  expect(domain.forecast([loss, { ...loss, closing: 0 }], 1000, 2)).toEqual({
-    balance: 0,
-    rate: -1,
-  });
-});
-it.each([0, -1, 1.5, 366, Infinity, NaN])(
-  "rejects invalid session count %s",
-  (sessions) => {
-    expect(() => domain.forecast([entry, entry], 1000, sessions)).toThrow(
-      /sessions/i,
-    );
-  },
-);
-it("rejects forecast overflow clearly", () => {
-  const huge = { ...entry, opening: 0.01, closing: 1e12, cashFlow: 0 };
-  expect(() => domain.forecast([huge, huge], 1000, 365)).toThrow(/overflow/i);
-});
 it("parses a complete backup into an independent validated state", () => {
   const input = {
     version: 1,
@@ -293,7 +251,7 @@ it("parses a complete backup into an independent validated state", () => {
     goals: [goal],
   };
   const parsed = domain.parseState(input);
-  expect(parsed).toEqual(input);
+  expect(parsed).toEqual({ ...input, transactions: [] });
   expect(parsed).not.toBe(input);
   expect(parsed.entries[0]).not.toBe(entry);
 });
@@ -327,17 +285,6 @@ it.each([
   { ...backup, goals: [{ ...goal, brokerId: "missing" }] },
 ])("rejects malformed backup %#", (input) => {
   expect(() => domain.parseState(input)).toThrow();
-});
-it.each([NaN, Infinity, -1, 1e12 + 1])(
-  "rejects invalid forecast initial balance %s",
-  (initial) => {
-    expect(() => domain.forecast([], initial, 1)).toThrow(/balance/i);
-  },
-);
-it("rejects invalid forecast entry money", () => {
-  expect(() => domain.forecast([{ ...entry, closing: NaN }], 1000, 1)).toThrow(
-    /balance/i,
-  );
 });
 it("handles zero denominators and excludes withdrawals from profit", () => {
   expect(performance(0, 100, 100)).toEqual({ pnl: 0, percent: null });

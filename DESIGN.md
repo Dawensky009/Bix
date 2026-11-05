@@ -1,6 +1,6 @@
 ---
 name: BIX
-description: Local-first trading journal in dark cyan with an equivalent light theme.
+description: Cloud trading journal with broker-reported bonus tracking, in dark cyan with an equivalent light theme.
 colors:
   dark-bg: "#080f19"
   dark-rail: "#0b1420"
@@ -98,6 +98,14 @@ components:
 # Design System: BIX
 
 ## Overview
+
+### Bonus-account adaptation
+
+The established dark-cyan world is retained, not replaced. The current Operate surface puts free balance, total balance and bonus progress ahead of historical performance. `.account-overview` is a divided two-area reading surface rather than a row of equal metric cards: balance reconciliation on the left, broker-sourced cumulative turnover on the right. At 960px it stacks, with a horizontal separator. Four destinations remain in navigation; Forecast is removed. Both themes use the same hierarchy and controls.
+
+Bonus principal and bonus profit stay separate. Progress uses a native accessible progress element and explicit status text; reaching 100% does not imply release. Journal details expose copied turnover, explicitly estimated bonus profit or a broker-reported override, and broker decisions. Free balance is labeled estimated when it depends on an estimate. Withdrawal amounts belong in Cash flow, never Net P&L; exact deductions and reported post-transaction balances are retained in the timeline. Account onboarding calculates the starting total and offers an expandable existing-account snapshot.
+
+The older component/layout descriptions below document inherited surfaces. The implementation and this adaptation supersede references to Forecast, equal metric cards and local-only persistence. Browser review fixtures, not live user data, are in `.impeccable/review/`; review notes state verification limits.
 
 BIX uses the confirmed dark-cyan dashboard direction: ink-navy surfaces, compact financial readings and restrained status accents. The light counterpart retains the same information architecture and behavior, using cool white surfaces and dark teal controls. Reference screenshots inform direction, not exact reproduction.
 

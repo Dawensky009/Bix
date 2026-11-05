@@ -6,13 +6,15 @@ export function Backup({
   onImport,
 }: {
   state: State;
-  onImport: (state: State) => void;
+  onImport: (state: State) => Promise<void>;
 }) {
   const [error, setError] = useState("");
   function download() {
     try {
       const url = URL.createObjectURL(
-        new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }),
+        new Blob([JSON.stringify(state, null, 2)], {
+          type: "application/json",
+        }),
       );
       const a = document.createElement("a");
       a.href = url;
@@ -34,11 +36,11 @@ export function Backup({
       const next = parseState(JSON.parse(await file.text()));
       if (
         !window.confirm(
-          "Replace all local accounts, entries and goals with this backup? Export your current data first.",
+          "Replace all cloud accounts, journal entries, transactions and goals with this backup? Export your current data first.",
         )
       )
         return;
-      onImport(next);
+      await onImport(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -59,9 +61,7 @@ export function Backup({
           />
         </label>
       </div>
-      <span>
-        Back up regularly. Your data is stored in the cloud.
-      </span>
+      <span>Back up regularly. Your data is stored in the cloud.</span>
       {error && (
         <div className="error" role="alert">
           {error}

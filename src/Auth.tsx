@@ -18,7 +18,10 @@ export function Auth() {
     setError("");
     try {
       if (mode === "signin") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
         if (error) throw error;
       } else {
         const { error } = await supabase.auth.signUp({ email, password });
@@ -118,8 +121,8 @@ export function Auth() {
                 {loading
                   ? "Please wait…"
                   : mode === "signin"
-                  ? "Sign in"
-                  : "Create account"}
+                    ? "Sign in"
+                    : "Create account"}
               </button>
             </form>
           </>
