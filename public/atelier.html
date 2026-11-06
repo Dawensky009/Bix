@@ -395,6 +395,7 @@ render();
       const retVal = e.opening > 0 && (1 + pnl / e.opening) > 0 ? pnl / e.opening : null;
 
       return {
+        id:             e.id,
         date:           e.date,
         opening:        e.opening,
         closing:        e.closing,
@@ -570,6 +571,11 @@ render();
     end      = records.at(-1)?.date || new Date().toISOString().slice(0,10);
     start    = startFor(end, range === 'custom' ? '6M' : range);
     point    = Math.max(0, selected().length - 1);
+
+    // Real data has gaps (weekends, non-trading days) which break the compound
+    // return chain. Fall back to P&L charts which always work with gapped data.
+    chartMode = 'cumulativePnl';
+    secondary = 'pnl';
 
     // Patch save-entry form → write to Supabase
     const _origSubmit = $('entryForm').onsubmit;
