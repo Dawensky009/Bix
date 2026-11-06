@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/atelier.html", "destination": "/atelier.html" },
+    { "source": "/((?!atelier\\.html$).*)", "destination": "/index.html" }
+  ]
+}

@@ -35,6 +35,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,webmanifest}"],
         navigateFallback: "index.html",
+        navigateFallbackDenylist: [/^\/atelier\.html/],
       },
     }),
   ],
