@@ -426,10 +426,13 @@ render();
         .bix-login-icon{width:48px;height:48px;border-radius:50%;background:#1a1f2e;border:1px solid #2a3050;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
         .bix-login-icon svg{width:22px;height:22px;stroke:#6687ff;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
         .bix-login-h{font-size:17px;font-weight:600;color:#ededeb;margin-bottom:8px;letter-spacing:-.02em}
-        .bix-login-p{font-size:13px;color:#777;line-height:1.6;margin-bottom:28px}
-        .bix-login-btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;background:#6687ff;color:#080808;border-radius:7px;text-decoration:none;font-weight:700;font-size:14px;letter-spacing:-.01em;transition:opacity .15s}
+        .bix-login-p{font-size:13px;color:#777;line-height:1.6;margin-bottom:24px}
+        .bix-login-field{width:100%;box-sizing:border-box;padding:11px 14px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:7px;color:#ededeb;font-size:14px;font-family:inherit;margin-bottom:10px;outline:none;transition:border-color .15s}
+        .bix-login-field:focus{border-color:#6687ff}
+        .bix-login-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:#6687ff;color:#080808;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:14px;font-family:inherit;letter-spacing:-.01em;transition:opacity .15s;margin-top:4px}
         .bix-login-btn:hover{opacity:.88}
-        .bix-login-hint{font-size:11px;color:#444;margin-top:18px;line-height:1.6}
+        .bix-login-btn:disabled{opacity:.5;cursor:not-allowed}
+        .bix-login-err{font-size:12px;color:#f49eaa;margin:10px 0 0;min-height:18px;text-align:left;line-height:1.5}
       </style>
       <div class="bix-login-card">
         <div class="bix-login-logo">BIX</div>
@@ -438,14 +441,54 @@ render();
         <div class="bix-login-icon">
           <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </div>
-        <div class="bix-login-h">Session non détectée</div>
-        <div class="bix-login-p">Connectez-vous d'abord via l'application principale.<br>Votre session sera lue automatiquement ici.</div>
-        <a href="/" class="bix-login-btn">
+        <div class="bix-login-h">Connexion</div>
+        <div class="bix-login-p">Entrez vos identifiants BIX pour accéder au registre.</div>
+        <input id="bixEmail" class="bix-login-field" type="email" placeholder="Adresse e-mail" autocomplete="email">
+        <input id="bixPwd" class="bix-login-field" type="password" placeholder="Mot de passe" autocomplete="current-password">
+        <div class="bix-login-err" id="bixErr"></div>
+        <button class="bix-login-btn" id="bixSubmit">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-          Ouvrir BIX
-        </a>
-        <div class="bix-login-hint">Pas encore de compte ? Créez-en un gratuitement sur l'application principale.</div>
+          Se connecter
+        </button>
       </div>`;
+
+    const SVG_BTN = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Se connecter';
+
+    async function doLogin() {
+      const email    = document.getElementById('bixEmail').value.trim();
+      const password = document.getElementById('bixPwd').value;
+      const errEl    = document.getElementById('bixErr');
+      const btn      = document.getElementById('bixSubmit');
+      if (!email || !password) { errEl.textContent = 'Veuillez remplir tous les champs.'; return; }
+      btn.disabled = true; btn.textContent = 'Connexion…'; errEl.textContent = '';
+      try {
+        const res  = await fetch(SURL + '/auth/v1/token?grant_type=password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SKEY },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errEl.textContent = data.error_description || data.message || 'Identifiants incorrects.';
+          btn.disabled = false; btn.innerHTML = SVG_BTN; return;
+        }
+        localStorage.setItem('sb-' + PROJ + '-auth-token', JSON.stringify({
+          access_token:  data.access_token,
+          refresh_token: data.refresh_token,
+          user:          data.user,
+          expires_at:    Date.now() + (data.expires_in || 3600) * 1000
+        }));
+        overlay.innerHTML = '<div style="color:#ededeb;font-family:Segoe UI,Arial,sans-serif;font-size:13px">Chargement…</div>';
+        window.location.reload();
+      } catch(e) {
+        errEl.textContent = 'Erreur réseau. Réessayez.';
+        btn.disabled = false; btn.innerHTML = SVG_BTN;
+      }
+    }
+
+    document.getElementById('bixSubmit').onclick = doLogin;
+    document.getElementById('bixPwd').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    document.getElementById('bixEmail').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('bixPwd').focus(); });
   }
 
   /* ── Error display ─────────────────────────────────────────── */
