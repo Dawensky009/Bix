@@ -221,8 +221,9 @@ render();
 </script><style>
 /* v4.1: additive closure editing; inherited Operate palette. */
 #journalTable td:first-child,#journalTable th:first-child{position:sticky;left:0;background:var(--surface);z-index:1;min-width:190px}
-.entry-edit-action{display:inline-flex;align-items:center;gap:5px;padding:3px 9px 3px 7px;border:1px solid var(--line);border-radius:14px;font-size:11px;font-weight:600;letter-spacing:.03em;background:var(--raised);color:var(--muted);margin-left:8px;min-height:0;cursor:pointer;transition:border-color .12s,color .12s,background .12s}
+.entry-edit-action{display:inline-flex;align-items:center;gap:5px;padding:3px 9px 3px 7px;border:1px solid var(--line);border-radius:14px;font-size:11px;font-weight:600;letter-spacing:.03em;background:var(--raised);color:var(--muted);margin-left:0;min-height:0;cursor:pointer;transition:border-color .12s,color .12s,background .12s}
 .entry-edit-action:hover{border-color:var(--accent);color:var(--accent);background:var(--surface)}
+#journalTable td:nth-child(11){white-space:nowrap}
 .journal-card>.entry-edit-action{margin:12px 0 0;width:100%;border-radius:7px;padding:9px 14px;font-size:13px;justify-content:center;gap:7px}
 #editDialog{width:700px;padding:0}#editDialog .dialog-head{padding:18px 24px;margin:0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
 #editForm{padding:0 24px}#editContext{padding:14px 24px 0;color:var(--muted);font-size:13px}#editHelp{margin:12px 0 20px}#editForm .actions{position:sticky;bottom:0;background:var(--surface);padding:14px 0;margin-top:8px;border-top:1px solid var(--line);z-index:1}#editForm .preview{margin-bottom:10px}#editOpening{color:var(--muted)}#editError{scroll-margin:100px}#editForm label{min-width:0}#editDialog .dialog-head h2{font-size:22px}#editDialog .caption{max-width:none}#editDialog .row strong{overflow-wrap:anywhere}
@@ -259,7 +260,7 @@ const v41Seed=BIX.seed;BIX.seed=()=>v41Seed().map(r=>({...r,id:'quotex-demo:'+r.
 let editSession=null;
 const editButton=r=>`<button type="button" class="entry-edit-action" data-edit-entry="${esc(r.id)}" aria-label="Modifier la clôture du ${r.date}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Modifier</button>`;
 const v41Journal=renderJournal;
-renderJournal=function(){ensureEntryIds(activeAccount());v41Journal();const rs=journalRows().slice(page*pageSize,(page+1)*pageSize);document.querySelectorAll('#journalTable tbody tr').forEach((tr,i)=>tr.cells[0].insertAdjacentHTML('beforeend',editButton(rs[i])));document.querySelectorAll('#journalCards .journal-card').forEach((el,i)=>el.insertAdjacentHTML('beforeend',editButton(rs[i])));document.querySelectorAll('#journalTable th').forEach(th=>th.textContent=th.textContent.replaceAll('$',currency))};
+renderJournal=function(){ensureEntryIds(activeAccount());v41Journal();const rs=journalRows().slice(page*pageSize,(page+1)*pageSize);document.querySelectorAll('#journalTable tbody tr').forEach((tr,i)=>tr.cells[10]?.insertAdjacentHTML('beforeend',' '+editButton(rs[i])));document.querySelectorAll('#journalCards .journal-card').forEach((el,i)=>el.insertAdjacentHTML('beforeend',editButton(rs[i])));document.querySelectorAll('#journalTable th').forEach(th=>th.textContent=th.textContent.replaceAll('$',currency))};
 const v41Detail=detail;detail=function(r){ensureEntryIds(activeAccount());v41Detail(r);$('detailContent').insertAdjacentHTML('beforeend','<div class="actions">'+editButton(r)+'</div>')};
 function openEdit(id){
  const index=records.findIndex(r=>r.id===id);if(index<0)return;
