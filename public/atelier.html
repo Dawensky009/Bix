@@ -517,10 +517,45 @@ render();
       </div>`;
   }
 
+  /* ── Token refresh ─────────────────────────────────────────── */
+  async function refreshSession(session) {
+    if (!session?.refresh_token) return null;
+    try {
+      const res = await fetch(SURL + '/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: SKEY },
+        body: JSON.stringify({ refresh_token: session.refresh_token })
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const fresh = {
+        access_token:  data.access_token,
+        refresh_token: data.refresh_token,
+        user:          data.user,
+        expires_at:    Date.now() + (data.expires_in || 3600) * 1000
+      };
+      localStorage.setItem('sb-' + PROJ + '-auth-token', JSON.stringify(fresh));
+      return fresh;
+    } catch { return null; }
+  }
+
   /* ── Main init ─────────────────────────────────────────────── */
   try {
-    const session = getSession();
+    let session = getSession();
     if (!session) { showLoginWall(); return; }
+
+    // Refresh if expired or expiring within 5 min
+    if (!session.expires_at || session.expires_at < Date.now() + 300000) {
+      const refreshed = await refreshSession(session);
+      if (refreshed) {
+        session = refreshed;
+      } else if (session.expires_at < Date.now()) {
+        // Truly expired and refresh failed — force re-login
+        localStorage.removeItem('sb-' + PROJ + '-auth-token');
+        showLoginWall();
+        return;
+      }
+    }
 
     const { access_token, user } = session;
     const uid = user.id;
@@ -633,7 +668,8 @@ render();
         });
         if (!res.ok) throw new Error(`Erreur d'enregistrement (` + res.status + `)`);
 
-        // Update local state immediately
+        // Update local state immediately — stamp real Supabase UUID so PATCH works
+        r.id = entryRow.id;
         acc.records.push(r);
         records = acc.records;
         end     = r.date;
@@ -709,6 +745,79 @@ render();
       _origOpenEdit(id);
       const r = records.find(rec => rec.id === id);
       if (r) $('editContext').textContent = activeAccount().name + ' · ' + currency + ' · ' + date(r.date) + ' · données réelles';
+    };
+
+    // Patch broker creation/rename → persist to Supabase
+    const _origBrokerSubmit = $('brokerForm').onsubmit;
+    $('brokerForm').onsubmit = async function(evt) {
+      evt.preventDefault();
+      const auth = accounts.find(a => a._bixToken);
+      if (!auth) { _origBrokerSubmit?.call(this, evt); return; }
+
+      const prevLen     = accounts.length;
+      const prevEditing = editingBroker;
+      const prevNames   = new Map(accounts.map(a => [a.id, a.name]));
+
+      // Run original handler (validation, local state, UI, notifications)
+      _origBrokerSubmit?.call(this, evt);
+
+      // If dialog still open, validation failed — stop
+      if ($('brokerDialog').open) return;
+
+      // ── New broker created ────────────────────────────────────
+      if (accounts.length > prevLen) {
+        const target   = accounts[accounts.length - 1];
+        const realId   = crypto.randomUUID();
+        const brokerRow = {
+          id:                realId,
+          user_id:           auth._bixUserId,
+          name:              target.name,
+          currency:          target.currency,
+          own_deposit:       target.ownDeposit,
+          bonus_percent:     target.hasBonus ? target.bonusPct  : null,
+          turnover_required: target.hasBonus ? target.turnover  : null,
+          initial_balance:   target.snapshot.closing,
+          current_balance:   target.snapshot.closing,
+          baseline_date:     target.snapshot.date
+        };
+        try {
+          const res = await fetch(SURL + '/rest/v1/brokers', {
+            method: 'POST',
+            headers: { apikey: SKEY, Authorization: 'Bearer ' + auth._bixToken, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+            body: JSON.stringify(brokerRow)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          // Swap demo- id for real Supabase UUID so future entry saves work
+          const oldId = target.id;
+          target.id = realId;
+          target._bixUserId = auth._bixUserId;
+          target._bixToken  = auth._bixToken;
+          if (activeId === oldId) { activeId = realId; }
+          notify('Courtier créé et enregistré dans BIX.');
+        } catch (err) {
+          notify('⚠ Courtier créé localement — synchronisation échouée. ' + err.message);
+        }
+        return;
+      }
+
+      // ── Rename (broker with records) ──────────────────────────
+      if (prevEditing) {
+        const updated = accounts.find(a => a.id === prevEditing);
+        if (!updated) return;
+        const oldName = prevNames.get(prevEditing);
+        if (updated.name !== oldName) {
+          try {
+            await fetch(SURL + '/rest/v1/brokers?id=eq.' + encodeURIComponent(prevEditing), {
+              method: 'PATCH',
+              headers: { apikey: SKEY, Authorization: 'Bearer ' + auth._bixToken, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+              body: JSON.stringify({ name: updated.name })
+            });
+            notify('Nom modifié et enregistré dans BIX.');
+          } catch (err) {
+            notify('⚠ Modifié localement — synchronisation échouée. ' + err.message);
+          }
+        }
+      }
     };
 
     // Patch broker switch
