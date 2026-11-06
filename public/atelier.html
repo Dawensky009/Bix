@@ -357,9 +357,21 @@ render();
   function buildRecords(broker, entries, transactions) {
     const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
     const principal = r2((broker.own_deposit || 0) * (broker.bonus_percent || 0) / 100);
+
+    // The BIX app does not persist opening in the DB (always 0).
+    // Derive it: first entry uses initial_balance, each subsequent entry
+    // uses the previous closing — matching what the React interface shows.
+    const initialOpening = r2(
+      broker.initial_balance ||
+      ((broker.own_deposit || 0) + principal)
+    );
+    let prevClosing = initialOpening;
     let cumPnl = 0;
 
     return sorted.map(e => {
+      // Always derive opening from the chain; never trust e.opening (stored as 0)
+      const opening = prevClosing;
+
       const dateTxs = transactions.filter(t => t.date === e.date);
       const target  = r2(e.cash_flow || 0);
 
@@ -373,31 +385,28 @@ render();
         if (Math.abs(derived - target) < 0.02) {
           deposit = posSum; deduction = dedSum; withdraw = r2(negSum - dedSum);
         } else {
-          // Transactions don't reconcile – fall back to cash_flow distribution
           deposit = r2(Math.max(0, target)); withdraw = r2(Math.max(0, -target));
         }
       } else {
         deposit = r2(Math.max(0, target)); withdraw = r2(Math.max(0, -target));
       }
 
-      // Guarantee: deposit - withdraw - deduction === entry.cash_flow
-      // (prototype's calculate() recomputes flow + pnl from these fields)
       const flow = r2(deposit - withdraw - deduction);
-      const pnl  = r2(e.closing - e.opening - flow);
+      const pnl  = r2(e.closing - opening - flow);
       cumPnl     = r2(cumPnl + pnl);
+      prevClosing = e.closing;
 
       const isConfirmed = e.bonus_status === 'released' || e.bonus_profit != null;
       const bonusProfit = e.bonus_profit != null
         ? e.bonus_profit
         : r2(Math.max(0, cumPnl) * 0.2);
 
-      // Protect against invalid return (division by zero or factor ≤ 0)
-      const retVal = e.opening > 0 && (1 + pnl / e.opening) > 0 ? pnl / e.opening : null;
+      const retVal = opening > 0 && (1 + pnl / opening) > 0 ? pnl / opening : null;
 
       return {
         id:             e.id,
         date:           e.date,
-        opening:        e.opening,
+        opening,
         closing:        e.closing,
         deposit,
         withdraw,
@@ -540,7 +549,10 @@ render();
       const brokerTxs     = txsRaw.filter(t => t.broker_id === broker.id);
       const recs          = buildRecords(broker, brokerEntries, brokerTxs);
       const principal     = r2((broker.own_deposit || 0) * (broker.bonus_percent || 0) / 100);
-      const snapDate      = broker.baseline_date || recs[0]?.date || new Date().toISOString().slice(0,10);
+      // snapshot.date must be one day before the first entry so the edit
+      // continuity check (expects add(previous.date, 1) === entry.date) passes.
+      const firstDate = recs[0]?.date || new Date().toISOString().slice(0,10);
+      const snapDate  = broker.baseline_date || add(firstDate, -1);
 
       accounts.push({
         id:         broker.id,
