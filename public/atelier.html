@@ -221,8 +221,9 @@ render();
 </script><style>
 /* v4.1: additive closure editing; inherited Operate palette. */
 #journalTable td:first-child,#journalTable th:first-child{position:sticky;left:0;background:var(--surface);z-index:1;min-width:190px}
-.entry-edit-action{color:var(--accent);border:1px solid var(--line);padding:7px 10px;margin-left:10px;min-height:44px;background:var(--surface)}
-.journal-card>.entry-edit-action{margin:12px 0 0;width:100%}
+.entry-edit-action{display:inline-flex;align-items:center;gap:5px;padding:3px 9px 3px 7px;border:1px solid var(--line);border-radius:14px;font-size:11px;font-weight:600;letter-spacing:.03em;background:var(--raised);color:var(--muted);margin-left:8px;min-height:0;cursor:pointer;transition:border-color .12s,color .12s,background .12s}
+.entry-edit-action:hover{border-color:var(--accent);color:var(--accent);background:var(--surface)}
+.journal-card>.entry-edit-action{margin:12px 0 0;width:100%;border-radius:7px;padding:9px 14px;font-size:13px;justify-content:center;gap:7px}
 #editDialog{width:700px;padding:0}#editDialog .dialog-head{padding:18px 24px;margin:0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
 #editForm{padding:0 24px}#editContext{padding:14px 24px 0;color:var(--muted);font-size:13px}#editHelp{margin:12px 0 20px}#editForm .actions{position:sticky;bottom:0;background:var(--surface);padding:14px 0;margin-top:8px;border-top:1px solid var(--line);z-index:1}#editForm .preview{margin-bottom:10px}#editOpening{color:var(--muted)}#editError{scroll-margin:100px}#editForm label{min-width:0}#editDialog .dialog-head h2{font-size:22px}#editDialog .caption{max-width:none}#editDialog .row strong{overflow-wrap:anywhere}
 @media(max-width:700px){#editDialog{width:100%;max-width:100%;height:100dvh;max-height:100dvh;margin:0;border-radius:0}#editDialog .dialog-head{padding:12px 16px}#editDialog .dialog-head h2{font-size:20px}#editForm{padding:0 16px}#editContext{padding:12px 16px 0}#editForm .form-grid{grid-template-columns:1fr 1fr;gap:12px}#editForm label{font-size:12px}#editForm input,#editForm textarea{font-size:16px}#editForm .full{grid-column:1/-1}#editForm .actions{gap:8px;padding-bottom:max(14px,env(safe-area-inset-bottom))}#editForm .actions button{font-size:13px;min-width:0}#editForm .preview{padding:10px 12px}#editForm .row{gap:8px;font-size:12px}#editHelp{font-size:12px;line-height:1.5}}
@@ -256,7 +257,7 @@ function ensureEntryIds(a){a.records.forEach(r=>{if(!r.id)r.id=a.id+':'+r.date})
 accounts.forEach(ensureEntryIds);initialAccounts.forEach(ensureEntryIds);
 const v41Seed=BIX.seed;BIX.seed=()=>v41Seed().map(r=>({...r,id:'quotex-demo:'+r.date}));
 let editSession=null;
-const editButton=r=>`<button type="button" class="entry-edit-action" data-edit-entry="${esc(r.id)}" aria-label="Modifier la clôture du ${r.date}">Modifier</button>`;
+const editButton=r=>`<button type="button" class="entry-edit-action" data-edit-entry="${esc(r.id)}" aria-label="Modifier la clôture du ${r.date}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Modifier</button>`;
 const v41Journal=renderJournal;
 renderJournal=function(){ensureEntryIds(activeAccount());v41Journal();const rs=journalRows().slice(page*pageSize,(page+1)*pageSize);document.querySelectorAll('#journalTable tbody tr').forEach((tr,i)=>tr.cells[0].insertAdjacentHTML('beforeend',editButton(rs[i])));document.querySelectorAll('#journalCards .journal-card').forEach((el,i)=>el.insertAdjacentHTML('beforeend',editButton(rs[i])));document.querySelectorAll('#journalTable th').forEach(th=>th.textContent=th.textContent.replaceAll('$',currency))};
 const v41Detail=detail;detail=function(r){ensureEntryIds(activeAccount());v41Detail(r);$('detailContent').insertAdjacentHTML('beforeend','<div class="actions">'+editButton(r)+'</div>')};
@@ -650,6 +651,64 @@ render();
       } finally {
         $('saveEntry').disabled = false;
       }
+    };
+
+    // Patch edit form → persist to Supabase
+    const _origEditSubmit = $('editForm').onsubmit;
+    $('editForm').onsubmit = async function(evt) {
+      evt.preventDefault();
+      const acc = accounts.find(a => a.id === activeId);
+      if (!acc?._bixToken) { _origEditSubmit?.call(this, evt); return; }
+
+      // Validate before any side-effects
+      const c = editCandidate();
+      if (c.error) { _origEditSubmit?.call(this, evt); return; }
+
+      const r = c.record;
+      const entryId = r.id;
+      const s = editSession;
+
+      // Apply in-memory immediately so UI updates without waiting for network
+      for (let j = c.index; j < records.length; j++) Object.assign(records[j], c.draft[j]);
+      $('editDialog').close();
+      editSession = null;
+      render();
+      restoreEditFocus(s);
+
+      // Persist to Supabase
+      const patch = {
+        date:         r.date,
+        closing:      r.closing,
+        cash_flow:    round(r.deposit - r.withdraw - r.deduction),
+        net_turnover: r.volume || null,
+        note:         r.note || '',
+        bonus_profit: r.source === 'confirmed' ? r.bonusProfit : null,
+        bonus_status: r.source === 'confirmed' ? 'released' : null
+      };
+      try {
+        const res = await fetch(SURL + '/rest/v1/entries?id=eq.' + encodeURIComponent(entryId), {
+          method: 'PATCH',
+          headers: {
+            apikey: SKEY,
+            Authorization: 'Bearer ' + acc._bixToken,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal'
+          },
+          body: JSON.stringify(patch)
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        notify('Clôture modifiée et enregistrée dans BIX.');
+      } catch (err) {
+        notify('⚠ Modifié localement — synchronisation échouée. ' + err.message);
+      }
+    };
+
+    // Fix "démo en mémoire" label in edit dialog — show "données réelles"
+    const _origOpenEdit = openEdit;
+    openEdit = function(id) {
+      _origOpenEdit(id);
+      const r = records.find(rec => rec.id === id);
+      if (r) $('editContext').textContent = activeAccount().name + ' · ' + currency + ' · ' + date(r.date) + ' · données réelles';
     };
 
     // Patch broker switch
